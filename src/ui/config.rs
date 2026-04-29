@@ -28,7 +28,7 @@ use overlay::{
     render_overlay_separator as shared_render_overlay_separator, render_overlay_shell,
 };
 
-const SETTINGS_LIMITATION_HINT: &str = "Currently, not all settings are supported by claude-rs. This project uses the official Anthropic Claude Agent SDK, which limits claude-rs implementing all Claude Code settings.";
+const SETTINGS_LIMITATION_HINT: &str = "Currently, not all settings are supported by lingxi-ascendc. This project uses the official Anthropic Claude Agent SDK, which limits lingxi-ascendc implementing all Claude Code settings.";
 const MIN_SETTINGS_PANEL_HEIGHT: u16 = 3;
 
 pub fn render(frame: &mut Frame, app: &mut App) {
@@ -298,7 +298,7 @@ fn render_output_style_overlay(frame: &mut Frame, area: Rect, app: &App) {
         },
         OverlayChrome {
             title: "Preferred output style",
-            subtitle: Some("This changes how Claude Code communicates with you"),
+            subtitle: Some("This changes how Lingxi AscendC communicates with you"),
             help: Some("Enter confirm | Esc cancel"),
         },
     );
@@ -1332,7 +1332,7 @@ mod tests {
 
         let rendered = buffer_text(terminal.backend().buffer());
 
-        assert!(rendered.contains("supported by claude-rs"));
+        assert!(rendered.contains("supported by lingxi-ascendc"));
         assert!(rendered.contains("Anthropic Claude Agent SDK"));
     }
 
@@ -1361,7 +1361,7 @@ mod tests {
 
         let rendered = buffer_text(terminal.backend().buffer());
 
-        assert!(rendered.contains("supported by claude-rs"));
+        assert!(rendered.contains("supported by lingxi-ascendc"));
         assert!(rendered.contains("Anthropic Claude Agent SDK"));
     }
 

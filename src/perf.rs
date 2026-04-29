@@ -29,7 +29,7 @@
 //! ```bash
 //! cargo run --features perf -- --perf-log performance.log
 //! # Writes JSON lines:
-//! # {"schema":"claude-rs-perf/v1","kind":"duration","run_id":"...","frame":1234,"ts_ms":1739599900793,"metric":"chat::render","duration_ms":2.345,"extra":{"key":"msgs","value":42}}
+//! # {"schema":"lingxi-ascendc-perf/v1","kind":"duration","run_id":"...","frame":1234,"ts_ms":1739599900793,"metric":"chat::render","duration_ms":2.345,"extra":{"key":"msgs","value":42}}
 //! ```
 
 #[cfg(feature = "perf")]
@@ -41,7 +41,7 @@ mod enabled {
     use std::path::Path;
     use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-    const PERF_SCHEMA: &str = "claude-rs-perf/v1";
+    const PERF_SCHEMA: &str = "lingxi-ascendc-perf/v1";
 
     // Thread-local file handle so Timer::drop can log without borrowing PerfLogger.
     thread_local! {

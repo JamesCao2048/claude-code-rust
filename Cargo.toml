@@ -1,5 +1,5 @@
 [package]
-name = "claude-code-rust"
+name = "lingxi-ascendc"
 version = "0.11.3"
 edition = "2024"
 rust-version = "1.88.0"
@@ -8,14 +8,14 @@ description = "A native Rust terminal interface for Claude Code"
 repository = "https://github.com/srothgan/claude-code-rust"
 keywords = ["cli", "tui", "claude", "ai", "terminal"]
 categories = ["command-line-interface"]
-default-run = "claude-rs"
+default-run = "lingxi-ascendc"
 
 [lib]
-name = "claude_code_rust"
+name = "lingxi_ascendc"
 path = "src/lib.rs"
 
 [[bin]]
-name = "claude-rs"
+name = "lingxi-ascendc"
 path = "src/main.rs"
 
 [dependencies]
