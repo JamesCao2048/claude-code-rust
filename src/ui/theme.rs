@@ -7,7 +7,7 @@ use ratatui::style::Color;
 pub const RUST_ORANGE: Color = Color::Rgb(244, 118, 0);
 
 // UI chrome
-pub const DIM: Color = Color::DarkGray;
+pub const DIM: Color = Color::Rgb(150, 150, 150);
 pub const PROMPT_CHAR: &str = "\u{276f}";
 pub const SEPARATOR_CHAR: &str = "\u{2500}";
 
@@ -55,7 +55,15 @@ pub fn tool_name_label(sdk_tool_name: &str) -> (&'static str, &'static str) {
 
 #[cfg(test)]
 mod tests {
+    use ratatui::style::Color;
+
     use super::tool_name_label;
+    use super::DIM;
+
+    #[test]
+    fn dim_color_is_visible_on_dark_terminal_themes() {
+        assert_eq!(DIM, Color::Rgb(150, 150, 150));
+    }
 
     #[test]
     fn task_and_agent_share_subagent_label_and_icon() {

@@ -23,8 +23,8 @@ const HELP_PANEL_HEIGHT: u16 = 14;
 const HELP_BUILTIN_SLASH_COMMANDS: [(&str, &str); 9] = [
     ("/config", "Open settings"),
     ("/docs", "Show in-chat help topics"),
-    ("/login", "Authenticate with Claude"),
-    ("/logout", "Sign out of Claude"),
+    ("/login", "Authenticate with Lingxi-AscendC"),
+    ("/logout", "Sign out of Lingxi-AscendC"),
     ("/mcp", "Open MCP"),
     ("/opus-version", "Pin the Opus alias version for this folder"),
     ("/plugins", "Open plugins"),

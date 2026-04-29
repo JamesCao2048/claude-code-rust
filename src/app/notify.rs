@@ -116,12 +116,12 @@ fn ring_bell() {
 fn send_desktop_notification(event: NotifyEvent) {
     let (summary, body) = match event {
         NotifyEvent::PermissionRequired => {
-            ("Claude Code", "Permission required -- waiting for your approval")
+            ("Lingxi-AscendC", "Permission required -- waiting for your approval")
         }
         NotifyEvent::QuestionRequired => {
-            ("Claude Code", "Question required -- waiting for your input")
+            ("Lingxi-AscendC", "Question required -- waiting for your input")
         }
-        NotifyEvent::TurnComplete => ("Claude Code", "Turn complete"),
+        NotifyEvent::TurnComplete => ("Lingxi-AscendC", "Turn complete"),
     };
     std::thread::spawn(move || {
         let _ = notify_rust::Notification::new().summary(summary).body(body).show();
@@ -194,9 +194,9 @@ where
 
 const fn notification_text(event: NotifyEvent) -> &'static str {
     match event {
-        NotifyEvent::PermissionRequired => "Claude Code: Permission required",
-        NotifyEvent::QuestionRequired => "Claude Code: Question required",
-        NotifyEvent::TurnComplete => "Claude Code: Turn complete",
+        NotifyEvent::PermissionRequired => "Lingxi-AscendC: Permission required",
+        NotifyEvent::QuestionRequired => "Lingxi-AscendC: Question required",
+        NotifyEvent::TurnComplete => "Lingxi-AscendC: Turn complete",
     }
 }
 
@@ -287,7 +287,7 @@ mod tests {
             NotificationPlan {
                 ring_bell: false,
                 send_desktop: false,
-                osc9_text: Some("Claude Code: Turn complete"),
+                osc9_text: Some("Lingxi-AscendC: Turn complete"),
             }
         );
     }
@@ -315,7 +315,7 @@ mod tests {
             NotificationPlan {
                 ring_bell: true,
                 send_desktop: false,
-                osc9_text: Some("Claude Code: Permission required"),
+                osc9_text: Some("Lingxi-AscendC: Permission required"),
             }
         );
     }
@@ -343,7 +343,7 @@ mod tests {
             NotificationPlan {
                 ring_bell: false,
                 send_desktop: false,
-                osc9_text: Some("Claude Code: Turn complete"),
+                osc9_text: Some("Lingxi-AscendC: Turn complete"),
             }
         );
     }

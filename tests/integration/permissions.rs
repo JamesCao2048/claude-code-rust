@@ -3,9 +3,9 @@
 // that the pending_interaction_ids queue is maintained, and that responses
 // are sent through the oneshot channel.
 
-use claude_code_rust::agent::events::ClientEvent;
-use claude_code_rust::agent::model;
-use claude_code_rust::app::{AppStatus, MessageBlock};
+use lingxi_ascendc::agent::events::ClientEvent;
+use lingxi_ascendc::agent::model;
+use lingxi_ascendc::app::{AppStatus, MessageBlock};
 use pretty_assertions::assert_eq;
 use tokio::sync::oneshot;
 
@@ -14,7 +14,7 @@ use crate::helpers::{send_client_event, test_app};
 /// Helper: create a tool call, send it, then send a permission request for it.
 /// Returns the oneshot receiver so the test can verify the response.
 fn setup_permission(
-    app: &mut claude_code_rust::app::App,
+    app: &mut lingxi_ascendc::app::App,
     tool_id: &str,
     options: Vec<model::PermissionOption>,
 ) -> oneshot::Receiver<model::RequestPermissionResponse> {
@@ -237,9 +237,9 @@ async fn turn_complete_does_not_clear_todos() {
     let mut app = test_app();
 
     // Simulate a TodoWrite by directly setting todos
-    app.todos = vec![claude_code_rust::app::TodoItem {
+    app.todos = vec![lingxi_ascendc::app::TodoItem {
         content: "Test task".into(),
-        status: claude_code_rust::app::TodoStatus::InProgress,
+        status: lingxi_ascendc::app::TodoStatus::InProgress,
         active_form: "Testing".into(),
     }];
     app.show_todo_panel = true;
@@ -254,10 +254,10 @@ async fn turn_complete_does_not_clear_todos() {
 async fn turn_complete_does_not_affect_mode() {
     let mut app = test_app();
 
-    app.mode = Some(claude_code_rust::app::ModeState {
+    app.mode = Some(lingxi_ascendc::app::ModeState {
         current_mode_id: "plan".into(),
         current_mode_name: "Plan".into(),
-        available_modes: vec![claude_code_rust::app::ModeInfo {
+        available_modes: vec![lingxi_ascendc::app::ModeInfo {
             id: "plan".into(),
             name: "Plan".into(),
         }],

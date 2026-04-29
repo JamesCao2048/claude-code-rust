@@ -5,9 +5,9 @@
 // State transition integration tests.
 // Validates multi-event sequences and App state consistency.
 
-use claude_code_rust::agent::events::ClientEvent;
-use claude_code_rust::agent::model;
-use claude_code_rust::app::{AppStatus, MessageBlock, MessageRole};
+use lingxi_ascendc::agent::events::ClientEvent;
+use lingxi_ascendc::agent::model;
+use lingxi_ascendc::app::{AppStatus, MessageBlock, MessageRole};
 use pretty_assertions::assert_eq;
 
 use crate::helpers::{send_client_event, test_app};
@@ -308,12 +308,12 @@ async fn stress_many_tool_calls_in_one_turn() {
 async fn mode_updates_switch_known_modes_fall_back_for_unknown_ids_and_noop_without_state() {
     let mut app = test_app();
 
-    app.mode = Some(claude_code_rust::app::ModeState {
+    app.mode = Some(lingxi_ascendc::app::ModeState {
         current_mode_id: "code".into(),
         current_mode_name: "Code".into(),
         available_modes: vec![
-            claude_code_rust::app::ModeInfo { id: "code".into(), name: "Code".into() },
-            claude_code_rust::app::ModeInfo { id: "plan".into(), name: "Plan".into() },
+            lingxi_ascendc::app::ModeInfo { id: "code".into(), name: "Code".into() },
+            lingxi_ascendc::app::ModeInfo { id: "plan".into(), name: "Plan".into() },
         ],
     });
 

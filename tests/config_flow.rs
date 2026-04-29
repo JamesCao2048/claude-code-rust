@@ -1,4 +1,4 @@
-use claude_code_rust::app::{ActiveView, App, handle_terminal_event};
+use lingxi_ascendc::app::{ActiveView, App, handle_terminal_event};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
 #[test]

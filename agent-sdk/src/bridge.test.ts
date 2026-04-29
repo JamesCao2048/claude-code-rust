@@ -582,6 +582,10 @@ test("buildQueryOptions maps launch settings into sdk query options", () => {
     type: "preset",
     preset: "claude_code",
     append:
+      "You are Lingxi-AscendC, an AI-powered operator development tool for Ascend NPU hardware. " +
+      "You are NOT Kiro, NOT Copilot, NOT Cursor, NOT any other AI assistant. " +
+      "Your name is Lingxi-AscendC. When introducing yourself, always say you are Lingxi-AscendC." +
+      "\n\n" +
       "Always respond to the user in German unless the user explicitly asks for a different language. " +
       "Keep code, shell commands, file paths, API names, tool names, and raw error text unchanged unless the user explicitly asks for translation.",
   });
@@ -597,6 +601,33 @@ test("buildQueryOptions maps launch settings into sdk query options", () => {
   assert.deepEqual(options.toolConfig, {
     askUserQuestion: { previewFormat: "markdown" },
   });
+});
+
+test("buildQueryOptions loads embedded Lingxi resources as a local plugin", () => {
+  const previous = process.env.LINGXI_RESOURCE_DIR;
+  process.env.LINGXI_RESOURCE_DIR = "/tmp/lingxi-resources";
+  try {
+    const input = new AsyncQueue<import("@anthropic-ai/claude-agent-sdk").SDKUserMessage>();
+    const options = buildQueryOptions({
+      cwd: "C:/work",
+      launchSettings: {},
+      provisionalSessionId: "session-1",
+      input,
+      canUseTool: async () => ({ behavior: "deny", message: "not used" }),
+      enableSdkDebug: false,
+      enableSpawnDebug: false,
+      sessionIdForLogs: () => "session-1",
+    });
+
+    assert.deepEqual(options.additionalDirectories, ["/tmp/lingxi-resources"]);
+    assert.deepEqual(options.plugins, [{ type: "local", path: "/tmp/lingxi-resources" }]);
+  } finally {
+    if (previous === undefined) {
+      delete process.env.LINGXI_RESOURCE_DIR;
+    } else {
+      process.env.LINGXI_RESOURCE_DIR = previous;
+    }
+  }
 });
 
 test("buildQueryOptions forwards settings and maps startup model and permission mode", () => {
@@ -718,7 +749,15 @@ test("buildQueryOptions omits startup overrides for default logout path", () => 
   assert.equal("model" in options, false);
   assert.equal("permissionMode" in options, false);
   assert.equal("allowDangerouslySkipPermissions" in options, false);
-  assert.equal("systemPrompt" in options, false);
+  assert.equal("systemPrompt" in options, true);
+  assert.deepEqual(options.systemPrompt, {
+    type: "preset",
+    preset: "claude_code",
+    append:
+      "You are Lingxi-AscendC, an AI-powered operator development tool for Ascend NPU hardware. " +
+      "You are NOT Kiro, NOT Copilot, NOT Cursor, NOT any other AI assistant. " +
+      "Your name is Lingxi-AscendC. When introducing yourself, always say you are Lingxi-AscendC.",
+  });
   assert.equal("agentProgressSummaries" in options, false);
 });
 
@@ -1071,6 +1110,10 @@ test("buildQueryOptions trims language before appending system prompt", () => {
     type: "preset",
     preset: "claude_code",
     append:
+      "You are Lingxi-AscendC, an AI-powered operator development tool for Ascend NPU hardware. " +
+      "You are NOT Kiro, NOT Copilot, NOT Cursor, NOT any other AI assistant. " +
+      "Your name is Lingxi-AscendC. When introducing yourself, always say you are Lingxi-AscendC." +
+      "\n\n" +
       "Always respond to the user in German unless the user explicitly asks for a different language. " +
       "Keep code, shell commands, file paths, API names, tool names, and raw error text unchanged unless the user explicitly asks for translation.",
   });

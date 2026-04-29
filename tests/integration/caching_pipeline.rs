@@ -11,13 +11,13 @@
 //   Group 3: History retention + estimator validation
 //   Group 5: Regression / full pipeline
 
-use claude_code_rust::agent::events::ClientEvent;
-use claude_code_rust::agent::model;
-use claude_code_rust::app::{
+use lingxi_ascendc::agent::events::ClientEvent;
+use lingxi_ascendc::agent::model;
+use lingxi_ascendc::app::{
     App, AppStatus, BlockCache, ChatMessage, DEFAULT_CACHE_SPLIT_HARD_LIMIT_BYTES,
     DEFAULT_CACHE_SPLIT_SOFT_LIMIT_BYTES, MessageBlock, MessageRole, TextBlock, TextBlockSpacing,
 };
-use claude_code_rust::ui::{SpinnerState, measure_message_height_cached};
+use lingxi_ascendc::ui::{SpinnerState, measure_message_height_cached};
 use ratatui::text::{Line, Span};
 use std::fmt::Write as _;
 
@@ -70,7 +70,7 @@ fn assistant_message_with_cache(text: &str) -> ChatMessage {
         vec![MessageBlock::Text(TextBlock {
             text: text.to_owned(),
             cache,
-            markdown: claude_code_rust::app::IncrementalMarkdown::from_complete(text),
+            markdown: lingxi_ascendc::app::IncrementalMarkdown::from_complete(text),
             trailing_spacing: TextBlockSpacing::None,
         })],
         None,

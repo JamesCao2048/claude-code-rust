@@ -18,16 +18,11 @@ const SPINNER_FRAMES: &[char] = &[
     '\u{2807}', '\u{280F}',
 ];
 
-const FERRIS_SAYS: &[&str] = &[
-    r" --------------------------------- ",
-    r"< Welcome back to Claude, in Rust! >",
-    r" --------------------------------- ",
-    r"        \             ",
-    r"         \            ",
-    r"            _~^~^~_  ",
-    r"        \) /  o o  \ (/",
-    r"          '_   -   _' ",
-    r"          / '-----' \ ",
+const BANNER_LINES: &[&str] = &[
+    "+--------------------------------------+",
+    "|            Lingxi-AscendC            |",
+    "|      Powered by Claude Code Rust     |",
+    "+--------------------------------------+",
 ];
 
 // Prepared for future randomized welcome-tip selection. Intentionally unused
@@ -36,24 +31,24 @@ const WELCOME_TIPS: &[&str] = &[
     "Use /mode plan before larger changes, then switch back to code once the plan is clear",
     "Use /mcp to connect live tools and docs instead of pasting stale context into chat",
     "Keep repo instructions short in CLAUDE.md and update them when mistakes repeat",
-    "Start prompts with the goal, relevant context, and constraints so Claude needs fewer corrections",
-    "Ask Claude for a plan first on multi-step work instead of jumping straight to edits",
-    "Give success criteria Claude can verify: tests, lint, screenshots, or exact outputs",
-    "For visual work, paste screenshots or mockups so Claude can verify UI changes instead of guessing",
+    "Start prompts with the goal, relevant context, and constraints so Lingxi-AscendC needs fewer corrections",
+    "Ask Lingxi-AscendC for a plan first on multi-step work instead of jumping straight to edits",
+    "Give success criteria Lingxi-AscendC can verify: tests, lint, screenshots, or exact outputs",
+    "For visual work, paste screenshots or mockups so Lingxi-AscendC can verify UI changes instead of guessing",
     "Start a fresh thread with /new-session when the task changes and old context is noise",
     "Use /compact when a session gets long and you want to keep the thread but trim context",
     "Use /resume <session_id> to jump back into earlier work without rebuilding context",
     "Use /docs shortcuts to see the live keyboard shortcuts for the current app state",
     "Use /docs commands to inspect the slash commands this app and the SDK expose",
-    "If Claude drifts, refine or restate the plan early instead of piling on corrective prompts",
+    "If Lingxi-AscendC drifts, refine or restate the plan early instead of piling on corrective prompts",
     "For tricky bugs, provide clear repro steps and runtime evidence instead of guessing fixes",
-    "Point Claude at the relevant files, errors, and constraints instead of pasting everything",
-    "If you do not know the exact file, let Claude search first and only pin the files that matter",
+    "Point Lingxi-AscendC at the relevant files, errors, and constraints instead of pasting everything",
+    "If you do not know the exact file, let Lingxi-AscendC search first and only pin the files that matter",
     "Ask codebase questions first in unfamiliar areas instead of coding blind",
     "Review diffs carefully even when the output looks plausible on first read",
     "Use hooks for checks that must run every time instead of relying on reminder text alone",
     "Turn repeated workflows into CLAUDE.md guidance only after they work reliably by hand",
-    "For larger features, let Claude clarify requirements and edge cases through structured questions",
+    "For larger features, let Lingxi-AscendC clarify requirements and edge cases through structured questions",
     "Use separate sessions for unrelated work so planning, debugging, and review stay clean",
 ];
 
@@ -155,7 +150,7 @@ impl<'a> MessageRenderContext<'a> {
 
 fn assistant_role_label_line() -> Line<'static> {
     let spans = vec![Span::styled(
-        "Claude",
+        "Lingxi-AscendC",
         Style::default().fg(theme::ROLE_ASSISTANT).add_modifier(Modifier::BOLD),
     )];
 
@@ -1045,7 +1040,7 @@ fn compacting_line(frame: usize) -> Line<'static> {
 fn welcome_lines(block: &WelcomeBlock, _width: u16) -> Vec<Line<'static>> {
     let pad = "  ";
     let mut lines = Vec::new();
-    for art_line in FERRIS_SAYS {
+    for art_line in BANNER_LINES {
         lines.push(Line::from(Span::styled(
             format!("{pad}{art_line}"),
             Style::default().fg(theme::RUST_ORANGE),
@@ -1080,6 +1075,23 @@ fn welcome_lines(block: &WelcomeBlock, _width: u16) -> Vec<Line<'static>> {
     // and randomized selection once this becomes a first-class surface.
     lines.push(Line::from(Span::styled(
         format!("{pad}Tips: {}", selected_welcome_tip(block)),
+        Style::default().fg(theme::DIM),
+    )));
+    lines.push(Line::default());
+    lines.push(Line::from(Span::styled(
+        format!("{pad}Commands:"),
+        Style::default().fg(theme::RUST_ORANGE).add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(Span::styled(
+        format!("{pad}  /lingxi-ascendc:gen <op> <out>       从零生成 AscendC 算子"),
+        Style::default().fg(theme::DIM),
+    )));
+    lines.push(Line::from(Span::styled(
+        format!("{pad}  /lingxi-ascendc:gen-evo <op> <out>   进化式生成（并行+世界模型）"),
+        Style::default().fg(theme::DIM),
+    )));
+    lines.push(Line::from(Span::styled(
+        format!("{pad}  /lingxi-ascendc:optimize <repo> <op> ops 仓库算子性能优化"),
         Style::default().fg(theme::DIM),
     )));
     lines.push(Line::default());
@@ -1445,6 +1457,14 @@ mod tests {
         );
     }
 
+    #[test]
+    fn welcome_banner_uses_ascii_for_stable_terminal_width() {
+        assert!(
+            BANNER_LINES.iter().all(|line| line.is_ascii()),
+            "welcome banner should avoid ambiguous-width box drawing glyphs"
+        );
+    }
+
     // force_markdown_line_breaks
 
     #[test]
@@ -1724,7 +1744,7 @@ mod tests {
             .position(|line| line.contains("Second paragraph"))
             .expect("second block");
 
-        assert_eq!(rendered.first().map(String::as_str), Some("Claude"));
+        assert_eq!(rendered.first().map(String::as_str), Some("Lingxi-AscendC"));
         assert!(second_idx > first_idx + 1);
         assert!(rendered[first_idx + 1].is_empty());
     }
@@ -1744,7 +1764,7 @@ mod tests {
         let after_idx =
             rendered.iter().position(|line| line.contains("After notice")).expect("after text");
 
-        assert_eq!(rendered.first().map(String::as_str), Some("Claude"));
+        assert_eq!(rendered.first().map(String::as_str), Some("Lingxi-AscendC"));
         assert!(before_idx < notice_idx && notice_idx < after_idx);
     }
 
@@ -1802,7 +1822,7 @@ mod tests {
             &mut msg, &spinner, 80, false, false, &mut lines,
         );
 
-        assert_eq!(render_lines_to_strings(&lines), vec!["Claude".to_owned(), "hello".to_owned()]);
+        assert_eq!(render_lines_to_strings(&lines), vec!["Lingxi-AscendC".to_owned(), "hello".to_owned()]);
 
         let (h, _) = measure_message_height_cached_with_tools_collapsed_and_separator(
             &mut msg, &spinner, 80, 1, false, false,
@@ -1826,7 +1846,7 @@ mod tests {
 
         let rendered = render_lines_to_strings(&lines);
         assert_eq!(rendered.len(), 2);
-        assert_eq!(rendered[0], "Claude");
+        assert_eq!(rendered[0], "Lingxi-AscendC");
         assert!(rendered[1].contains("Thinking..."));
 
         let (h, _) = measure_message_height_cached_with_tools_collapsed_and_separator(
@@ -1885,7 +1905,7 @@ mod tests {
 
         let rendered = render_lines_to_strings(&lines);
         assert_eq!(rendered.len(), 2);
-        assert_eq!(rendered[0], "Claude");
+        assert_eq!(rendered[0], "Lingxi-AscendC");
         assert!(rendered[1].contains("Compacting context..."));
 
         let (h, _) = measure_message_height_cached_with_tools_collapsed_and_separator(
@@ -1916,7 +1936,7 @@ mod tests {
 
         assert_eq!(remaining, 0);
         let rendered = render_lines_to_strings(&out);
-        assert_eq!(rendered.first().map(String::as_str), Some("Claude"));
+        assert_eq!(rendered.first().map(String::as_str), Some("Lingxi-AscendC"));
         assert!(rendered[1].contains("Thinking..."));
         assert!(!rendered.last().is_some_and(String::is_empty));
     }
@@ -1943,7 +1963,7 @@ mod tests {
 
         assert_eq!(remaining, 0);
         let rendered = render_lines_to_strings(&out);
-        assert_eq!(rendered.first().map(String::as_str), Some("Claude"));
+        assert_eq!(rendered.first().map(String::as_str), Some("Lingxi-AscendC"));
         assert!(rendered[1].contains("Compacting context..."));
         assert!(!rendered.last().is_some_and(String::is_empty));
     }
@@ -2328,7 +2348,7 @@ mod tests {
         render_message_with_tools_collapsed(&mut msg, &spinner, 80, false, &mut lines);
         let rendered = render_lines_to_strings(&lines);
 
-        assert_eq!(rendered.first().map(String::as_str), Some("Claude"));
+        assert_eq!(rendered.first().map(String::as_str), Some("Lingxi-AscendC"));
         let heading_idx =
             rendered.iter().position(|line| line.contains("Heading")).expect("heading");
         assert_eq!(heading_idx, 1);
@@ -2357,7 +2377,7 @@ mod tests {
         let rendered = render_lines_to_strings(&out);
 
         assert_eq!(remaining, 0);
-        assert_eq!(rendered.first().map(String::as_str), Some("Claude"));
+        assert_eq!(rendered.first().map(String::as_str), Some("Lingxi-AscendC"));
         let heading_idx =
             rendered.iter().position(|line| line.contains("Heading")).expect("heading");
         assert_eq!(heading_idx, 1);

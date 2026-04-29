@@ -819,26 +819,31 @@ function startupPermissionModeOptions(
     : { permissionMode };
 }
 
-function systemPromptFromLaunchSettings(
-  launchSettings: SessionLaunchSettings,
-):
-  | {
-      type: "preset";
-      preset: "claude_code";
-      append: string;
-    }
-  | undefined {
+function systemPromptFromLaunchSettings(launchSettings: SessionLaunchSettings): {
+  type: "preset";
+  preset: "claude_code";
+  append: string;
+} {
+  const parts: string[] = [];
+
+  parts.push(
+    "You are Lingxi-AscendC, an AI-powered operator development tool for Ascend NPU hardware. " +
+      "You are NOT Kiro, NOT Copilot, NOT Cursor, NOT any other AI assistant. " +
+      "Your name is Lingxi-AscendC. When introducing yourself, always say you are Lingxi-AscendC.",
+  );
+
   const language = launchSettings.language?.trim();
-  if (!language) {
-    return undefined;
+  if (language) {
+    parts.push(
+      `Always respond to the user in ${language} unless the user explicitly asks for a different language. ` +
+        `Keep code, shell commands, file paths, API names, tool names, and raw error text unchanged unless the user explicitly asks for translation.`,
+    );
   }
 
   return {
     type: "preset",
     preset: "claude_code",
-    append:
-      `Always respond to the user in ${language} unless the user explicitly asks for a different language. ` +
-      `Keep code, shell commands, file paths, API names, tool names, and raw error text unchanged unless the user explicitly asks for translation.`,
+    append: parts.join("\n\n"),
   };
 }
 
@@ -857,7 +862,13 @@ export function buildQueryOptions(params: QueryOptionsBuilderParams) {
     ...modelOption,
     ...permissionModeOptions,
     toolConfig: { askUserQuestion: { previewFormat: "markdown" as const } },
-    ...(systemPrompt ? { systemPrompt } : {}),
+    ...(process.env.LINGXI_RESOURCE_DIR
+      ? { additionalDirectories: [process.env.LINGXI_RESOURCE_DIR] }
+      : {}),
+    ...(process.env.LINGXI_RESOURCE_DIR
+      ? { plugins: [{ type: "local" as const, path: process.env.LINGXI_RESOURCE_DIR }] }
+      : {}),
+    systemPrompt,
     ...(params.launchSettings.agent_progress_summaries !== undefined
       ? { agentProgressSummaries: params.launchSettings.agent_progress_summaries }
       : {}),

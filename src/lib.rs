@@ -7,6 +7,7 @@ pub mod error;
 pub mod logging;
 pub mod perf;
 pub mod ui;
+pub mod embedded_resources;
 
 use clap::{Parser, Subcommand, ValueEnum};
 

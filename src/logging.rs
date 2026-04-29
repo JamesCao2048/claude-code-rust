@@ -583,7 +583,7 @@ mod tests {
         let resolved = resolve_log_path(&cli).expect("resolve succeeds").expect("path exists");
         assert_eq!(resolved.source.as_str(), "default");
         let path = resolved.path.to_string_lossy().replace('\\', "/");
-        assert!(path.ends_with("claude-code-rust/logs/lingxi-ascendc.log"));
+        assert!(path.ends_with("lingxi-ascendc/logs/lingxi-ascendc.log"));
     }
 
     #[test]
@@ -647,7 +647,7 @@ mod tests {
 
         let resolved = resolve_perf_path(&cli).expect("resolve succeeds").expect("path exists");
         let path = resolved.to_string_lossy().replace('\\', "/");
-        assert!(path.ends_with("claude-code-rust/logs/lingxi-ascendc-perf.log"));
+        assert!(path.ends_with("lingxi-ascendc/logs/lingxi-ascendc-perf.log"));
     }
 
     #[test]

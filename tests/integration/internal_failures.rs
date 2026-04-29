@@ -5,9 +5,9 @@
 // Internal-failure integration tests.
 // Validate client event processing + final UI render output for failed tool calls.
 
-use claude_code_rust::agent::events::ClientEvent;
-use claude_code_rust::agent::model;
-use claude_code_rust::app::MessageBlock;
+use lingxi_ascendc::agent::events::ClientEvent;
+use lingxi_ascendc::agent::model;
+use lingxi_ascendc::app::MessageBlock;
 use pretty_assertions::assert_eq;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -108,7 +108,7 @@ async fn failed_tool_call_with_plain_command_error_keeps_normal_rendering() {
     assert!(frame.contains("command not found"));
 }
 
-fn tool_call_text_payload(app: &claude_code_rust::app::App, tool_id: &str) -> Option<String> {
+fn tool_call_text_payload(app: &lingxi_ascendc::app::App, tool_id: &str) -> Option<String> {
     let (mi, bi) = app.tool_call_index.get(tool_id).copied()?;
     let MessageBlock::ToolCall(tc) = &app.messages.get(mi)?.blocks.get(bi)? else {
         return None;
@@ -122,10 +122,10 @@ fn tool_call_text_payload(app: &claude_code_rust::app::App, tool_id: &str) -> Op
     })
 }
 
-fn render_frame_to_string(app: &mut claude_code_rust::app::App, width: u16, height: u16) -> String {
+fn render_frame_to_string(app: &mut lingxi_ascendc::app::App, width: u16, height: u16) -> String {
     let backend = TestBackend::new(width, height);
     let mut terminal = Terminal::new(backend).expect("create test terminal");
-    terminal.draw(|f| claude_code_rust::ui::render(f, app)).expect("draw frame");
+    terminal.draw(|f| lingxi_ascendc::ui::render(f, app)).expect("draw frame");
 
     let mut out = String::new();
     let buffer = terminal.backend().buffer();

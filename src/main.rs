@@ -24,6 +24,12 @@ fn run() -> anyhow::Result<()> {
     let _logging = lingxi_ascendc::logging::LoggingRuntime::init(&cli)?;
     let perf_path = lingxi_ascendc::logging::resolve_perf_path(&cli)?;
 
+    lingxi_ascendc::embedded_resources::EmbeddedResourceDir::cleanup_orphans();
+    let resource_dir = lingxi_ascendc::embedded_resources::EmbeddedResourceDir::extract()
+        .map_err(|e| anyhow::anyhow!("failed to extract embedded resources: {e}"))?;
+    // SAFETY: called before any threads are spawned (single-threaded at this point)
+    unsafe { std::env::set_var("LINGXI_RESOURCE_DIR", resource_dir.path()) };
+
     #[cfg(not(feature = "perf"))]
     if perf_path.is_some() {
         return Err(anyhow::anyhow!(
