@@ -528,8 +528,7 @@ mod tests {
 
     fn is_update_notice_message(msg: &ChatMessage) -> bool {
         matches!(msg.role, MessageRole::System(Some(SystemSeverity::Warning)))
-            && first_block_text(msg)
-                .contains("Upgrade to latest version via npm install -g claude-code-rust.")
+            && first_block_text(msg).contains("Update available:")
     }
 
     // shorten_tool_title
@@ -1699,7 +1698,7 @@ mod tests {
     }
 
     #[test]
-    fn update_available_pushes_warning_system_message_with_versions_and_install_command() {
+    fn update_available_pushes_warning_system_message_with_versions() {
         let mut app = make_test_app();
         assert!(app.update_notice.is_none());
 
@@ -1715,7 +1714,7 @@ mod tests {
         assert!(matches!(app.messages[0].role, MessageRole::System(Some(SystemSeverity::Warning))));
         assert_eq!(
             first_block_text(&app.messages[0]),
-            "Update available: current v0.2.0, latest v0.3.0. Upgrade to latest version via npm install -g claude-code-rust."
+            "Update available: current v0.2.0, latest v0.3.0."
         );
         let Some(update_notice) = app.update_notice.as_ref() else {
             panic!("expected update notice state");
@@ -4011,10 +4010,7 @@ mod tests {
             .iter()
             .find(|msg| is_update_notice_message(msg))
             .expect("expected update notice message after connect");
-        assert_eq!(
-            first_block_text(notice),
-            "Update available: current v0.11.1, latest v0.11.2. Upgrade to latest version via npm install -g claude-code-rust."
-        );
+        assert_eq!(first_block_text(notice), "Update available: current v0.11.1, latest v0.11.2.");
         assert_eq!(
             app.update_notice
                 .as_ref()
@@ -4053,10 +4049,7 @@ mod tests {
             .iter()
             .find(|msg| is_update_notice_message(msg))
             .expect("expected update notice message after replacement");
-        assert_eq!(
-            first_block_text(notice),
-            "Update available: current v0.11.1, latest v0.11.2. Upgrade to latest version via npm install -g claude-code-rust."
-        );
+        assert_eq!(first_block_text(notice), "Update available: current v0.11.1, latest v0.11.2.");
         assert_eq!(
             app.update_notice
                 .as_ref()

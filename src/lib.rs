@@ -3,11 +3,11 @@
 
 pub mod agent;
 pub mod app;
+pub mod embedded_resources;
 pub mod error;
 pub mod logging;
 pub mod perf;
 pub mod ui;
-pub mod embedded_resources;
 
 use clap::{Parser, Subcommand, ValueEnum};
 

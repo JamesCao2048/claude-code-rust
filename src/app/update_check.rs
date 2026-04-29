@@ -84,6 +84,12 @@ pub fn start_update_check(app: &App, cli: &Cli) {
 }
 
 fn update_check_disabled(no_update_check_flag: bool) -> bool {
+    // Temporarily disable update checks until Lingxi AscendC has its own release channel.
+    const LINGXI_UPDATE_CHECK_DISABLED: bool = true;
+    if LINGXI_UPDATE_CHECK_DISABLED {
+        return true;
+    }
+
     if no_update_check_flag {
         return true;
     }
@@ -263,6 +269,11 @@ mod tests {
     #[test]
     fn update_check_disabled_prefers_flag() {
         assert!(update_check_disabled(true));
+    }
+
+    #[test]
+    fn update_check_disabled_by_default_for_lingxi_distribution() {
+        assert!(update_check_disabled(false));
     }
 
     #[test]

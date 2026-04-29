@@ -1822,7 +1822,10 @@ mod tests {
             &mut msg, &spinner, 80, false, false, &mut lines,
         );
 
-        assert_eq!(render_lines_to_strings(&lines), vec!["Lingxi-AscendC".to_owned(), "hello".to_owned()]);
+        assert_eq!(
+            render_lines_to_strings(&lines),
+            vec!["Lingxi-AscendC".to_owned(), "hello".to_owned()]
+        );
 
         let (h, _) = measure_message_height_cached_with_tools_collapsed_and_separator(
             &mut msg, &spinner, 80, 1, false, false,

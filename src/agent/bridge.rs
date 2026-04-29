@@ -119,9 +119,7 @@ impl<'a> BridgeScriptResolver<'a> {
         Self {
             explicit_script,
             env_script: std::env::var_os("CLAUDE_RS_AGENT_BRIDGE").map(PathBuf::from),
-            current_exe: std::env::current_exe()
-                .ok()
-                .and_then(|p| p.canonicalize().ok()),
+            current_exe: std::env::current_exe().ok().and_then(|p| p.canonicalize().ok()),
             allow_dev_fallbacks: cfg!(debug_assertions),
             cwd_script: PathBuf::from(BRIDGE_SCRIPT_RELATIVE_PATH),
             manifest_script: PathBuf::from(env!("CARGO_MANIFEST_DIR"))

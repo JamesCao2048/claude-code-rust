@@ -19,7 +19,6 @@ use std::rc::Rc;
 
 const TURN_ERROR_INPUT_LOCK_HINT: &str =
     "Input disabled after an error. Press Ctrl+Q to quit and try again.";
-const UPDATE_INSTALL_COMMAND: &str = "npm install -g claude-code-rust";
 
 pub(super) fn handle_connected_client_event(
     app: &mut App,
@@ -367,9 +366,7 @@ pub(super) fn ensure_update_notice_message(app: &mut App) {
 }
 
 fn format_update_available_message(latest_version: &str, current_version: &str) -> String {
-    format!(
-        "Update available: current v{current_version}, latest v{latest_version}. Upgrade to latest version via {UPDATE_INSTALL_COMMAND}."
-    )
+    format!("Update available: current v{current_version}, latest v{latest_version}.")
 }
 
 pub(super) fn handle_service_status_event(

@@ -57,8 +57,8 @@ pub fn tool_name_label(sdk_tool_name: &str) -> (&'static str, &'static str) {
 mod tests {
     use ratatui::style::Color;
 
-    use super::tool_name_label;
     use super::DIM;
+    use super::tool_name_label;
 
     #[test]
     fn dim_color_is_visible_on_dark_terminal_themes() {
