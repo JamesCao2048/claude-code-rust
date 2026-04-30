@@ -5,6 +5,7 @@ use super::{App, AppStatus, CancelOrigin, ChatMessage, MessageBlock, MessageRole
 use crate::agent::events::ClientEvent;
 use crate::agent::model;
 use crate::app::slash;
+use crate::app::state::MAX_PROMPT_HISTORY;
 
 pub(super) fn submit_input(app: &mut App) {
     if matches!(app.status, AppStatus::Connecting | AppStatus::CommandPending | AppStatus::Error) {
@@ -129,10 +130,30 @@ pub(super) fn maybe_auto_submit_after_cancel(app: &mut App) {
 }
 
 fn dispatch_submission(app: &mut App, text: String) {
+    push_prompt_history(app, &text);
     if slash::try_handle_submit(app, &text) {
         return;
     }
     dispatch_prompt_turn(app, text);
+}
+
+/// Append a submitted prompt to the recall history, deduping against the
+/// previous entry and capping at [`MAX_PROMPT_HISTORY`]. Also resets any
+/// in-progress Up/Down browsing state.
+fn push_prompt_history(app: &mut App, text: &str) {
+    app.prompt_history_cursor = None;
+    app.prompt_history_draft = None;
+    if text.is_empty() {
+        return;
+    }
+    if app.prompt_history.last().map(String::as_str) == Some(text) {
+        return;
+    }
+    app.prompt_history.push(text.to_owned());
+    let overflow = app.prompt_history.len().saturating_sub(MAX_PROMPT_HISTORY);
+    if overflow > 0 {
+        app.prompt_history.drain(0..overflow);
+    }
 }
 
 fn dispatch_prompt_turn(app: &mut App, text: String) {
@@ -196,6 +217,60 @@ mod tests {
         app.conn = Some(std::rc::Rc::new(crate::agent::client::AgentConnection::new(tx)));
         app.session_id = Some(model::SessionId::new("session-1"));
         (app, rx)
+    }
+
+    #[test]
+    fn submit_appends_text_to_prompt_history() {
+        let (mut app, _rx) = app_with_connection();
+        app.input.set_text("first prompt");
+        submit_input(&mut app);
+        // Submitting flips status to Thinking; reset so the next submit isn't
+        // treated as queued-during-busy (which intentionally skips history).
+        app.status = AppStatus::Ready;
+        app.input.set_text("second prompt");
+        submit_input(&mut app);
+
+        assert_eq!(app.prompt_history, vec!["first prompt", "second prompt"]);
+        assert!(app.prompt_history_cursor.is_none());
+        assert!(app.prompt_history_draft.is_none());
+    }
+
+    #[test]
+    fn consecutive_duplicate_submissions_are_deduped_in_history() {
+        let (mut app, _rx) = app_with_connection();
+        app.input.set_text("hello");
+        submit_input(&mut app);
+        app.status = AppStatus::Ready;
+        app.input.set_text("hello");
+        submit_input(&mut app);
+
+        assert_eq!(app.prompt_history, vec!["hello"]);
+    }
+
+    #[test]
+    fn busy_submission_does_not_record_history() {
+        let (mut app, _rx) = app_with_connection();
+        app.status = AppStatus::Running;
+        app.input.set_text("queued");
+        submit_input(&mut app);
+
+        assert!(app.prompt_history.is_empty());
+    }
+
+    #[test]
+    fn prompt_history_is_capped_at_max() {
+        let (mut app, _rx) = app_with_connection();
+        for i in 0..(MAX_PROMPT_HISTORY + 5) {
+            app.input.set_text(&format!("p-{i}"));
+            submit_input(&mut app);
+            app.status = AppStatus::Ready;
+        }
+        assert_eq!(app.prompt_history.len(), MAX_PROMPT_HISTORY);
+        assert_eq!(app.prompt_history.first().map(String::as_str), Some("p-5"));
+        assert_eq!(
+            app.prompt_history.last().map(String::as_str),
+            Some(format!("p-{}", MAX_PROMPT_HISTORY + 4)).as_deref(),
+        );
     }
 
     #[test]

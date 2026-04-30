@@ -120,6 +120,9 @@ pub struct ChatRenderTraceState {
     pub selection_snapshot_active: bool,
 }
 
+/// Cap on the number of submitted prompts retained for Up/Down recall.
+pub const MAX_PROMPT_HISTORY: usize = 200;
+
 #[allow(clippy::struct_excessive_bools)]
 pub struct App {
     pub active_view: ActiveView,
@@ -257,6 +260,16 @@ pub struct App {
     /// If another editing-like event or a paste payload arrives in the same
     /// drain cycle, this is cleared and no submit occurs.
     pub pending_submit: Option<InputSnapshot>,
+    /// Submitted prompt history, oldest first. Pressing Up at the top row of
+    /// the input recalls the previous entry; Down walks back toward the
+    /// in-progress draft. Capped at [`MAX_PROMPT_HISTORY`] entries.
+    pub prompt_history: Vec<String>,
+    /// Index into [`prompt_history`] when the user is browsing history.
+    /// `None` when not browsing (i.e. editing the live draft).
+    pub prompt_history_cursor: Option<usize>,
+    /// In-progress draft text saved when the user first enters history
+    /// browsing, restored when they walk past the most-recent entry via Down.
+    pub prompt_history_draft: Option<String>,
     /// Timing-based paste burst detector. Detects rapid character streams
     /// (paste delivered as individual key events) and buffers them into a
     /// single paste payload. Fallback for terminals without bracketed paste.
@@ -350,6 +363,9 @@ pub struct App {
     pub startup_session_picker_requested: bool,
     pub startup_recent_sessions_loaded: bool,
     pub startup_session_picker_resolved: bool,
+    /// Permission mode forced by CLI flags (`--permission-mode` or `--dangerously-skip-permissions`).
+    /// Overrides settings.json for the lifetime of the process.
+    pub startup_permission_mode_override: Option<crate::app::config::DefaultPermissionMode>,
 }
 
 impl App {
@@ -884,6 +900,9 @@ impl App {
             slash: None,
             subagent: None,
             pending_submit: None,
+            prompt_history: Vec::new(),
+            prompt_history_cursor: None,
+            prompt_history_draft: None,
             paste_burst: super::paste_burst::PasteBurstDetector::new(),
             pending_paste_text: String::new(),
             pending_paste_session: None,
@@ -929,6 +948,7 @@ impl App {
             startup_session_picker_requested: false,
             startup_recent_sessions_loaded: false,
             startup_session_picker_resolved: false,
+            startup_permission_mode_override: None,
         }
     }
 

@@ -441,8 +441,60 @@ fn handle_history_key(app: &mut App, key: KeyEvent) -> bool {
     match (key.code, key.modifiers) {
         (KeyCode::Char('z'), m) if m == KeyModifiers::CONTROL => app.input.textarea_undo(),
         (KeyCode::Char('y'), m) if m == KeyModifiers::CONTROL => app.input.textarea_redo(),
+        // Up at the top of the input (or while already browsing history) walks
+        // backward through previously submitted prompts. Once browsing is
+        // active, Up always navigates history regardless of cursor row so
+        // multi-line entries don't trap the user mid-recall.
+        (KeyCode::Up, m)
+            if m.is_empty()
+                && (app.prompt_history_cursor.is_some() || app.input.cursor_row() == 0) =>
+        {
+            recall_history_prev(app)
+        }
+        // Down only navigates history while browsing is active.
+        (KeyCode::Down, m) if m.is_empty() && app.prompt_history_cursor.is_some() => {
+            recall_history_next(app)
+        }
         _ => false,
     }
+}
+
+/// Walk one step toward older entries in the prompt history. Saves the
+/// current draft on entry so Down can restore it. Returns `true` whenever
+/// the key should be considered consumed (even at the oldest entry).
+fn recall_history_prev(app: &mut App) -> bool {
+    if app.prompt_history.is_empty() {
+        return false;
+    }
+    let next_idx = match app.prompt_history_cursor {
+        None => {
+            app.prompt_history_draft = Some(app.input.text());
+            app.prompt_history.len() - 1
+        }
+        Some(0) => return true, // already at oldest; consume the key
+        Some(i) => i - 1,
+    };
+    app.prompt_history_cursor = Some(next_idx);
+    app.input.set_text(&app.prompt_history[next_idx]);
+    true
+}
+
+/// Walk one step toward newer entries. At the newest entry the saved draft
+/// is restored and history-browsing mode exits.
+fn recall_history_next(app: &mut App) -> bool {
+    let Some(idx) = app.prompt_history_cursor else {
+        return false;
+    };
+    if idx + 1 < app.prompt_history.len() {
+        let next_idx = idx + 1;
+        app.prompt_history_cursor = Some(next_idx);
+        app.input.set_text(&app.prompt_history[next_idx]);
+    } else {
+        let draft = app.prompt_history_draft.take().unwrap_or_default();
+        app.prompt_history_cursor = None;
+        app.input.set_text(&draft);
+    }
+    true
 }
 
 fn handle_navigation_key(app: &mut App, key: KeyEvent) -> bool {
@@ -1069,6 +1121,98 @@ mod tests {
     use crossterm::event::{KeyCode, KeyModifiers};
     use ratatui::layout::Rect;
     use std::time::{Duration, Instant};
+
+    fn up_key() -> KeyEvent {
+        KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)
+    }
+    fn down_key() -> KeyEvent {
+        KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn up_arrow_recalls_previous_prompt_when_history_present() {
+        let mut app = App::test_default();
+        app.prompt_history = vec!["hello".into(), "world".into()];
+
+        assert!(handle_history_key(&mut app, up_key()));
+
+        assert_eq!(app.input.text(), "world");
+        assert_eq!(app.prompt_history_cursor, Some(1));
+        assert_eq!(app.prompt_history_draft.as_deref(), Some(""));
+    }
+
+    #[test]
+    fn up_arrow_walks_back_through_older_entries() {
+        let mut app = App::test_default();
+        app.prompt_history = vec!["a".into(), "b".into(), "c".into()];
+
+        assert!(handle_history_key(&mut app, up_key()));
+        assert_eq!(app.input.text(), "c");
+        assert!(handle_history_key(&mut app, up_key()));
+        assert_eq!(app.input.text(), "b");
+        assert!(handle_history_key(&mut app, up_key()));
+        assert_eq!(app.input.text(), "a");
+        // Pressing Up at the oldest entry stays put but still consumes the key.
+        assert!(handle_history_key(&mut app, up_key()));
+        assert_eq!(app.input.text(), "a");
+        assert_eq!(app.prompt_history_cursor, Some(0));
+    }
+
+    #[test]
+    fn up_arrow_with_empty_history_does_not_consume_key() {
+        let mut app = App::test_default();
+        assert!(!handle_history_key(&mut app, up_key()));
+        assert!(app.prompt_history_cursor.is_none());
+    }
+
+    #[test]
+    fn down_arrow_walks_forward_and_restores_draft() {
+        let mut app = App::test_default();
+        app.prompt_history = vec!["older".into(), "newer".into()];
+        app.input.set_text("draft text");
+
+        // Up enters history, saving draft.
+        assert!(handle_history_key(&mut app, up_key()));
+        assert_eq!(app.input.text(), "newer");
+        assert!(handle_history_key(&mut app, up_key()));
+        assert_eq!(app.input.text(), "older");
+
+        // Down walks back toward the draft.
+        assert!(handle_history_key(&mut app, down_key()));
+        assert_eq!(app.input.text(), "newer");
+        assert!(handle_history_key(&mut app, down_key()));
+        assert_eq!(app.input.text(), "draft text");
+        assert!(app.prompt_history_cursor.is_none());
+        assert!(app.prompt_history_draft.is_none());
+    }
+
+    #[test]
+    fn down_arrow_without_active_browse_does_not_consume_key() {
+        let mut app = App::test_default();
+        app.prompt_history = vec!["x".into()];
+        assert!(!handle_history_key(&mut app, down_key()));
+    }
+
+    #[test]
+    fn up_arrow_with_modifier_falls_through_history_handler() {
+        let mut app = App::test_default();
+        app.prompt_history = vec!["entry".into()];
+        let key = KeyEvent::new(KeyCode::Up, KeyModifiers::SHIFT);
+        assert!(!handle_history_key(&mut app, key));
+        assert!(app.prompt_history_cursor.is_none());
+    }
+
+    #[test]
+    fn up_arrow_with_cursor_below_top_row_does_not_recall() {
+        let mut app = App::test_default();
+        app.prompt_history = vec!["earlier".into()];
+        app.input.set_text("line1\nline2");
+        // After set_text the cursor sits on the last row, not row 0.
+        assert!(app.input.cursor_row() > 0);
+        assert!(!handle_history_key(&mut app, up_key()));
+        assert!(app.prompt_history_cursor.is_none());
+        assert_eq!(app.input.text(), "line1\nline2");
+    }
 
     #[test]
     fn ctrl_shortcut_accepts_standard_ctrl_v_encoding() {

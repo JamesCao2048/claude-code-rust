@@ -169,7 +169,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         let spinner_ch = SPINNER_FRAMES[app.spinner_frame % SPINNER_FRAMES.len()];
         let line = Line::from(vec![
             Span::styled(format!("{spinner_ch} "), Style::default().fg(theme::DIM)),
-            Span::styled("Connecting to Claude Code...", Style::default().fg(theme::DIM)),
+            Span::styled("Initializing...", Style::default().fg(theme::DIM)),
         ]);
         frame.render_widget(Paragraph::new(line), geometry.padded);
         return;

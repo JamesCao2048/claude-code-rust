@@ -197,6 +197,9 @@ pub fn create_app(cli: &Cli) -> App {
         slash: None,
         subagent: None,
         pending_submit: None,
+        prompt_history: Vec::new(),
+        prompt_history_cursor: None,
+        prompt_history_draft: None,
         paste_burst: super::paste_burst::PasteBurstDetector::new(),
         pending_paste_text: String::new(),
         pending_paste_session: None,
@@ -251,6 +254,15 @@ pub fn create_app(cli: &Cli) -> App {
         ),
         startup_recent_sessions_loaded: false,
         startup_session_picker_resolved: false,
+        startup_permission_mode_override: cli.resolved_permission_mode().map(|mode| match mode {
+            crate::CliPermissionMode::Default => super::config::DefaultPermissionMode::Default,
+            crate::CliPermissionMode::AcceptEdits => super::config::DefaultPermissionMode::AcceptEdits,
+            crate::CliPermissionMode::Plan => super::config::DefaultPermissionMode::Plan,
+            crate::CliPermissionMode::DontAsk => super::config::DefaultPermissionMode::DontAsk,
+            crate::CliPermissionMode::BypassPermissions => {
+                super::config::DefaultPermissionMode::BypassPermissions
+            }
+        }),
     };
 
     if let Err(err) = super::config::initialize_shared_state(&mut app) {
@@ -359,6 +371,8 @@ mod tests {
             enable_perf: false,
             perf_log: None,
             perf_append: false,
+            permission_mode: None,
+            dangerously_skip_permissions: false,
         };
 
         let app = super::create_app(&cli);

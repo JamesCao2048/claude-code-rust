@@ -20,12 +20,12 @@ pub(crate) fn load_oauth_credentials() -> Option<ClaudeOAuthCredentials> {
     load_oauth_credentials_at(&path)
 }
 
-/// Returns `true` when valid OAuth credentials exist on disk.
-///
-/// Reads `~/.claude/.credentials.json` and checks that
-/// `claudeAiOauth.accessToken` is a non-empty string.
+/// Returns `true` when valid OAuth credentials exist on disk
+/// or when `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_API_KEY` env var is set.
 pub fn has_credentials() -> bool {
     load_oauth_credentials().is_some()
+        || std::env::var("ANTHROPIC_AUTH_TOKEN").is_ok_and(|v| !v.trim().is_empty())
+        || std::env::var("ANTHROPIC_API_KEY").is_ok_and(|v| !v.trim().is_empty())
 }
 
 fn load_oauth_credentials_at(path: &Path) -> Option<ClaudeOAuthCredentials> {

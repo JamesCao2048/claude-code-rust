@@ -5,6 +5,30 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::PathBuf;
 
+fn deserialize_u64_from_number<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    let v = serde_json::Value::deserialize(deserializer)?;
+    match v {
+        serde_json::Value::Number(n) => {
+            if let Some(u) = n.as_u64() {
+                Ok(u)
+            } else if let Some(f) = n.as_f64() {
+                if !f.is_finite() || f < 0.0 {
+                    Err(D::Error::custom(format!("expected non-negative finite number, got {f}")))
+                } else {
+                    Ok(f.round() as u64)
+                }
+            } else {
+                Err(D::Error::custom(format!("expected number, got {n}")))
+            }
+        }
+        other => Err(D::Error::custom(format!("expected number, got {other}"))),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct SessionId(String);
@@ -965,6 +989,7 @@ pub enum SessionUpdate {
     ApiRetryUpdate {
         attempt: u64,
         max_retries: u64,
+        #[serde(deserialize_with = "deserialize_u64_from_number")]
         retry_delay_ms: u64,
         error_status: Option<u16>,
         error: ApiRetryError,

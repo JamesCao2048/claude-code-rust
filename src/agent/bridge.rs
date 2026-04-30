@@ -26,6 +26,8 @@ impl BridgeLauncher {
         let mut cmd = Command::new(&self.runtime_path);
         cmd.arg(&self.script_path);
         cmd.env("CLAUDE_RS_BRIDGE_DIAGNOSTICS", if bridge_diagnostics_enabled { "1" } else { "0" });
+        cmd.env("CLAUDE_CODE_ENTRYPOINT", "cli");
+        cmd.env("EMBEDDED_SEARCH_TOOLS", "1");
         cmd.stdin(std::process::Stdio::piped());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(if bridge_diagnostics_enabled {

@@ -10,13 +10,23 @@ export function emitAuthRequired(session: SessionState, detail?: string): void {
     return;
   }
   session.authHintSent = true;
+  const usingThirdParty =
+    (process.env.ANTHROPIC_AUTH_TOKEN ?? "").trim().length > 0 ||
+    (process.env.ANTHROPIC_API_KEY ?? "").trim().length > 0 ||
+    (() => {
+      const url = (process.env.ANTHROPIC_BASE_URL ?? "").trim();
+      return url.length > 0 && !/^https?:\/\/(api\.)?anthropic\.com(\/|$)/i.test(url);
+    })();
+  const fallbackDescription = usingThirdParty
+    ? "Third-party provider rejected the request. Verify ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN/ANTHROPIC_API_KEY."
+    : "Type /login to authenticate.";
   writeEvent({
     event: "auth_required",
-    method_name: "Claude Login",
+    method_name: usingThirdParty ? "Third-Party Auth" : "Claude Login",
     method_description:
       detail && detail.trim().length > 0
         ? detail
-        : "Type /login to authenticate.",
+        : fallbackDescription,
   });
 }
 

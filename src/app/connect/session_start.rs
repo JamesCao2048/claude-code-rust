@@ -73,10 +73,13 @@ fn build_session_settings_object(app: &App) -> Value {
         settings.insert("model".to_owned(), Value::String(model));
     }
 
+    let permission_mode = app
+        .startup_permission_mode_override
+        .unwrap_or_else(|| app.config.default_permission_mode_effective());
     settings.insert(
         "permissions".to_owned(),
         json!({
-            "defaultMode": app.config.default_permission_mode_effective().as_stored()
+            "defaultMode": permission_mode.as_stored()
         }),
     );
     settings.insert("fastMode".to_owned(), Value::Bool(app.config.fast_mode_effective()));

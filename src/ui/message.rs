@@ -452,7 +452,12 @@ fn append_assistant_tool_block(
     layout: &mut MessageLayout,
     state: &mut AssistantLayoutState,
 ) {
-    if tc.hidden_unless_focused_interaction() {
+    let has_unfocused_hidden_interaction = tc.hidden
+        && (tc.pending_permission.as_ref().is_some_and(|permission| !permission.focused)
+            || tc.pending_question.as_ref().is_some_and(|question| !question.focused));
+    if (render_context.options.tools_collapsed || has_unfocused_hidden_interaction)
+        && tc.hidden_unless_focused_interaction()
+    {
         return;
     }
     if !state.prev_was_tool && state.has_body_content {
@@ -1083,6 +1088,14 @@ fn welcome_lines(block: &WelcomeBlock, _width: u16) -> Vec<Line<'static>> {
         Style::default().fg(theme::RUST_ORANGE).add_modifier(Modifier::BOLD),
     )));
     lines.push(Line::from(Span::styled(
+        format!("{pad}  /lingxi-ascendc:next [switch <op>]   全场景算子开发下一步建议器"),
+        Style::default().fg(theme::DIM),
+    )));
+    lines.push(Line::from(Span::styled(
+        format!("{pad}                                       读取当前算子开发状态，推荐下一步，不执行 agent"),
+        Style::default().fg(theme::DIM),
+    )));
+    lines.push(Line::from(Span::styled(
         format!("{pad}  /lingxi-ascendc:gen <op> <out>       从零生成 AscendC 算子"),
         Style::default().fg(theme::DIM),
     )));
@@ -1092,6 +1105,10 @@ fn welcome_lines(block: &WelcomeBlock, _width: u16) -> Vec<Line<'static>> {
     )));
     lines.push(Line::from(Span::styled(
         format!("{pad}  /lingxi-ascendc:optimize <repo> <op> ops 仓库算子性能优化"),
+        Style::default().fg(theme::DIM),
+    )));
+    lines.push(Line::from(Span::styled(
+        format!("{pad}  /lingxi-ascendc:debug <task_dir>     AscendC 算子调试与精度修复"),
         Style::default().fg(theme::DIM),
     )));
     lines.push(Line::default());
@@ -2136,33 +2153,59 @@ mod tests {
     fn assistant_message_suppresses_hidden_subagent_child_tools() {
         let spinner = idle_spinner();
 
-        for tools_collapsed in [false, true] {
-            let mut hidden_tool = make_tool_call_info(
-                "hidden-child",
-                "Bash",
-                crate::agent::model::ToolCallStatus::Completed,
-                "child output",
-            );
-            hidden_tool.hidden = true;
-            let mut msg = ChatMessage::new(
-                MessageRole::Assistant,
-                vec![MessageBlock::ToolCall(Box::new(hidden_tool))],
-                None,
-            );
+        let mut hidden_tool = make_tool_call_info(
+            "hidden-child",
+            "Read",
+            crate::agent::model::ToolCallStatus::Completed,
+            "child output",
+        );
+        hidden_tool.hidden = true;
+        let mut msg = ChatMessage::new(
+            MessageRole::Assistant,
+            vec![MessageBlock::ToolCall(Box::new(hidden_tool))],
+            None,
+        );
 
-            let mut lines = Vec::new();
-            render_message_with_tools_collapsed(
-                &mut msg,
-                &spinner,
-                120,
-                tools_collapsed,
-                &mut lines,
-            );
-            let rendered = render_lines_to_strings(&lines);
+        let mut lines = Vec::new();
+        render_message_with_tools_collapsed(&mut msg, &spinner, 120, true, &mut lines);
+        let rendered = render_lines_to_strings(&lines);
 
-            assert!(!rendered.iter().any(|line| line.contains("hidden-child")));
-            assert!(!rendered.iter().any(|line| line.contains("child output")));
-        }
+        assert!(!rendered.iter().any(|line| line.contains("hidden-child")));
+        assert!(!rendered.iter().any(|line| line.contains("child output")));
+    }
+
+    #[test]
+    fn assistant_message_renders_hidden_subagent_child_tools_when_expanded() {
+        let spinner = idle_spinner();
+        let root = make_tool_call_info(
+            "root-agent",
+            "Agent",
+            crate::agent::model::ToolCallStatus::InProgress,
+            "",
+        );
+        let mut hidden_tool = make_tool_call_info(
+            "hidden-child",
+            "Read",
+            crate::agent::model::ToolCallStatus::Completed,
+            "child output",
+        );
+        hidden_tool.hidden = true;
+        let mut msg = ChatMessage::new(
+            MessageRole::Assistant,
+            vec![
+                MessageBlock::ToolCall(Box::new(root)),
+                MessageBlock::ToolCall(Box::new(hidden_tool)),
+            ],
+            None,
+        );
+
+        let mut lines = Vec::new();
+        render_message_with_tools_collapsed(&mut msg, &spinner, 120, false, &mut lines);
+        let rendered = render_lines_to_strings(&lines);
+
+        assert!(rendered.iter().any(|line| line.contains("root-agent")));
+        assert!(rendered.iter().any(|line| line.contains("hidden-child")));
+        assert!(rendered.iter().any(|line| line.contains("child output")));
     }
 
     #[test]

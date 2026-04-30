@@ -37,6 +37,7 @@ const BASE_SUPPORTED_MODE_IDS: PermissionMode[] = [
   "acceptEdits",
   "plan",
   "dontAsk",
+  "bypassPermissions",
 ];
 
 function currentModelSupportsAutoMode(session: SessionState): boolean {
@@ -64,9 +65,6 @@ function computedSupportedModeIds(session: SessionState): PermissionMode[] {
   const supported = [...BASE_SUPPORTED_MODE_IDS];
   if (currentModelSupportsAutoMode(session)) {
     supported.push("auto");
-  }
-  if (session.supportsBypassPermissionsMode) {
-    supported.push("bypassPermissions");
   }
   if (session.mode) {
     supported.push(session.mode);

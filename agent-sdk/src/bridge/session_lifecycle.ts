@@ -151,6 +151,19 @@ export function shouldEmitStartupAuthRequiredForAccount(account: AccountInfo): b
   if (nonEmptyString(provider) && provider !== "firstParty") {
     return false;
   }
+  // Third-party provider routed via ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN/ANTHROPIC_API_KEY:
+  // the upstream SDK does not populate apiProvider/email/apiKeySource for these, but the
+  // user has provided their own credentials, so the Claude OAuth login hint is misleading.
+  const hasThirdPartyToken =
+    nonEmptyString(process.env.ANTHROPIC_AUTH_TOKEN) ||
+    nonEmptyString(process.env.ANTHROPIC_API_KEY);
+  const baseUrl = process.env.ANTHROPIC_BASE_URL?.trim() ?? "";
+  const usesNonOfficialBaseUrl =
+    baseUrl.length > 0 &&
+    !/^https?:\/\/(api\.)?anthropic\.com(\/|$)/i.test(baseUrl);
+  if (hasThirdPartyToken || usesNonOfficialBaseUrl) {
+    return false;
+  }
   return !nonEmptyString(account.email) && !nonEmptyString(account.apiKeySource);
 }
 const DEFAULT_SETTING_SOURCES: SettingSource[] = ["user", "project", "local"];
@@ -808,15 +821,12 @@ function startupPermissionModeOptions(
       ? (settings.permissions as Record<string, unknown>)
       : undefined;
   const permissionMode = permissionModeFromSettingsValue(permissions?.defaultMode);
-  if (!permissionMode) {
-    return {};
-  }
-  return permissionMode === "bypassPermissions"
-    ? {
-        permissionMode,
-        allowDangerouslySkipPermissions: true,
-      }
-    : { permissionMode };
+  // Always grant the dangerous-skip capability so users can freely cycle into
+  // bypassPermissions via Shift+Tab at runtime, matching claude-code CLI semantics.
+  return {
+    ...(permissionMode ? { permissionMode } : {}),
+    allowDangerouslySkipPermissions: true,
+  };
 }
 
 function systemPromptFromLaunchSettings(launchSettings: SessionLaunchSettings): {
@@ -832,6 +842,15 @@ function systemPromptFromLaunchSettings(launchSettings: SessionLaunchSettings): 
       "Your name is Lingxi-AscendC. When introducing yourself, always say you are Lingxi-AscendC.",
   );
 
+  const resourceDir = process.env.LINGXI_RESOURCE_DIR?.trim();
+  if (resourceDir) {
+    parts.push(
+      `Packaged Lingxi resources are available under LINGXI_RESOURCE_DIR=${resourceDir}. ` +
+        "Resolve built-in resource references such as `evolution/`, `archive_tasks/`, `utils/`, and `.claude/` under that directory when they are not present in the current working directory. " +
+        "Use absolute paths under LINGXI_RESOURCE_DIR for tool calls that read or execute those packaged resources.",
+    );
+  }
+
   const language = launchSettings.language?.trim();
   if (language) {
     parts.push(
@@ -839,6 +858,17 @@ function systemPromptFromLaunchSettings(launchSettings: SessionLaunchSettings): 
         `Keep code, shell commands, file paths, API names, tool names, and raw error text unchanged unless the user explicitly asks for translation.`,
     );
   }
+
+  parts.push(
+    "# Agent usage policy\n" +
+      "The custom agents (lingxi, lingxi-evo, lingxi-partial, ops-evo, ops-partial, ascend-kernel-developer) " +
+      "are INTERNAL orchestration agents. Do NOT spawn them unless:\n" +
+      "- A slash command (e.g. /gen, /gen-evo, /optimize) explicitly instructs you to, OR\n" +
+      "- The user directly requests a specific agent by name.\n\n" +
+      "For general exploration, coding, and Q&A tasks, work directly in the main context using " +
+      "Read, Grep, Bash, Edit tools. Prefer direct tool use over spawning sub-agents. " +
+      "Only use the built-in Explore agent when you need to search across many files (more than 3 queries).",
+  );
 
   return {
     type: "preset",
@@ -854,6 +884,7 @@ export function buildQueryOptions(params: QueryOptionsBuilderParams) {
   const settings = normalizedSettingsFromLaunchSettings(params.launchSettings);
   return {
     cwd: params.cwd,
+    maxTurns: 2000,
     includePartialMessages: true,
     promptSuggestions: true,
     executable: "node" as const,
@@ -882,6 +913,20 @@ export function buildQueryOptions(params: QueryOptionsBuilderParams) {
         logSdkStderrLine(line);
       }
     },
+    env: {
+      ...(process.env.ANTHROPIC_AUTH_TOKEN
+        ? { ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN }
+        : {}),
+      ...(process.env.ANTHROPIC_BASE_URL
+        ? { ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL }
+        : {}),
+      ...(process.env.ANTHROPIC_API_KEY
+        ? { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY }
+        : {}),
+      ...(process.env.CLAUDE_CODE_ENTRYPOINT
+        ? { CLAUDE_CODE_ENTRYPOINT: process.env.CLAUDE_CODE_ENTRYPOINT }
+        : {}),
+    },
     spawnClaudeCodeProcess: (options: {
       command: string;
       args: string[];
@@ -889,10 +934,23 @@ export function buildQueryOptions(params: QueryOptionsBuilderParams) {
       env: Record<string, string | undefined>;
       signal: AbortSignal;
     }) => {
+      try {
+        const spawnInfo = JSON.stringify({
+          command: options.command,
+          args: options.args,
+          cwd: options.cwd,
+          envKeys: Object.keys(options.env),
+          envAnthropicAuthToken: options.env.ANTHROPIC_AUTH_TOKEN ? "present" : "missing",
+          envAnthropicBaseUrl: options.env.ANTHROPIC_BASE_URL ? "present" : "missing",
+        }, null, 2);
+        fs.writeFileSync("/tmp/lingxi-spawn-debug.json", spawnInfo + "\n", "utf8");
+      } catch (e) {
+        fs.writeFileSync("/tmp/lingxi-spawn-debug-err.txt", String(e) + "\n", "utf8");
+      }
       logSdkProcessSpawnStarted(options, params.enableSpawnDebug);
       const child = spawnChild(options.command, options.args, {
         cwd: options.cwd,
-        env: options.env,
+        env: { ...process.env, ...options.env },
         signal: options.signal,
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,

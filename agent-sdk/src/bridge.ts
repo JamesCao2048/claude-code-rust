@@ -1,8 +1,9 @@
 import { createRequire } from "node:module";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import readline from "node:readline";
 import { pathToFileURL } from "node:url";
+import os from "node:os";
 import {
   getSessionMessages,
   listSessions,
@@ -803,7 +804,34 @@ async function handleCommand(command: BridgeCommand, requestId?: string): Promis
   }
 }
 
+function ensureApiTokenCredentials(): void {
+  const authToken = process.env.ANTHROPIC_AUTH_TOKEN?.trim();
+  if (!authToken) return;
+  const credentialsPath = join(os.homedir(), ".claude", ".credentials.json");
+  if (existsSync(credentialsPath)) return;
+  try {
+    mkdirSync(dirname(credentialsPath), { recursive: true });
+    const credentials = {
+      claudeAiOauth: {
+        accessToken: authToken,
+        refreshToken: "",
+        expiresAt: 9999999999999,
+      },
+    };
+    writeFileSync(credentialsPath, JSON.stringify(credentials), "utf8");
+    bridgeLogger.info({
+      target: LOG_TARGETS.BRIDGE_LIFECYCLE,
+      eventName: "api_token_credentials_created",
+      message: "Created temporary OAuth credentials from ANTHROPIC_AUTH_TOKEN",
+      outcome: "success",
+    });
+  } catch {
+    // Ignore failures; let the normal auth flow handle it.
+  }
+}
+
 function main(): void {
+  ensureApiTokenCredentials();
   bridgeLogger.info({
     target: LOG_TARGETS.BRIDGE_LIFECYCLE,
     eventName: "bridge_process_started",

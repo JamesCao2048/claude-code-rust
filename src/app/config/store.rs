@@ -143,7 +143,7 @@ pub fn set_fast_mode(document: &mut Value, enabled: bool) {
 
 pub fn always_thinking_enabled(document: &Value) -> Result<bool, ()> {
     match read_persisted_setting(document, setting_spec(SettingId::AlwaysThinking))? {
-        PersistedSettingValue::Missing => Ok(false),
+        PersistedSettingValue::Missing => Ok(true),
         PersistedSettingValue::Bool(value) => Ok(value),
         PersistedSettingValue::String(_) => Err(()),
     }
@@ -159,7 +159,7 @@ pub fn set_always_thinking_enabled(document: &mut Value, enabled: bool) {
 
 pub fn thinking_effort_level(document: &Value) -> Result<EffortLevel, ()> {
     match read_persisted_setting(document, setting_spec(SettingId::ThinkingEffort))? {
-        PersistedSettingValue::Missing => Ok(EffortLevel::Medium),
+        PersistedSettingValue::Missing => Ok(EffortLevel::High),
         PersistedSettingValue::Bool(_) => Err(()),
         PersistedSettingValue::String(value) => EffortLevel::from_stored(&value).ok_or(()),
     }

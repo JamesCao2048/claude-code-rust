@@ -861,7 +861,7 @@ impl ConfigState {
     #[must_use]
     pub fn thinking_effort_effective(&self) -> EffortLevel {
         store::thinking_effort_level(&self.committed_settings_document)
-            .unwrap_or(EffortLevel::Medium)
+            .unwrap_or(EffortLevel::High)
     }
 
     #[must_use]

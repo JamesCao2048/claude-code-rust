@@ -683,7 +683,7 @@ fn overlay_effort_for_model(app: &App, model_id: &str, current: EffortLevel) -> 
     if supported.is_empty() || supported.contains(&current) {
         return current;
     }
-    supported.iter().copied().find(|level| *level == EffortLevel::Medium).unwrap_or(supported[0])
+    supported.iter().copied().find(|level| *level == EffortLevel::High).unwrap_or(supported[0])
 }
 
 pub(super) fn step_index_clamped(current: usize, delta: isize, len: usize) -> usize {

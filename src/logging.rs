@@ -56,9 +56,10 @@ impl LoggingRuntime {
         let directives = build_filter_directives(cli);
         let filter = tracing_subscriber::EnvFilter::try_new(directives.as_str())
             .map_err(|e| anyhow::anyhow!("invalid tracing filter `{directives}`: {e}"))?;
+        let log_append = true;
         let writer = RollingFileWriter::new(
             &log_path.path,
-            cli.log_append,
+            log_append,
             LOG_ROTATION_MAX_BYTES,
             LOG_ROTATION_MAX_FILES,
         )?;
@@ -83,7 +84,7 @@ impl LoggingRuntime {
             log_file = %log_path.path.display(),
             log_path_source = log_path.source.as_str(),
             log_filter = %directives,
-            log_append = cli.log_append,
+            log_append = log_append,
             log_rotation_max_bytes = LOG_ROTATION_MAX_BYTES,
             log_rotation_max_files = LOG_ROTATION_MAX_FILES,
             version = env!("CARGO_PKG_VERSION"),
@@ -110,7 +111,7 @@ fn build_filter_directives(cli: &Cli) -> String {
                 .map(str::to_owned)
         })
         .or_else(|| std::env::var("RUST_LOG").ok())
-        .unwrap_or_else(|| "info".to_owned());
+        .unwrap_or_else(|| DiagnosticsPreset::Session.filter_directives().to_owned());
     if !directives.contains("tui_markdown=") {
         directives.push_str(",tui_markdown=info");
     }
@@ -149,12 +150,8 @@ fn resolve_log_path(cli: &Cli) -> anyhow::Result<Option<ResolvedLogPath>> {
     Ok(Some(ResolvedLogPath { path, source: LogPathSource::Default }))
 }
 
-fn logging_enabled_without_explicit_path(cli: &Cli) -> bool {
-    cli.enable_logs
-        || cli.diagnostics_preset.is_some()
-        || cli.log_filter.is_some()
-        || cli.log_append
-        || std::env::var_os("RUST_LOG").is_some()
+fn logging_enabled_without_explicit_path(_cli: &Cli) -> bool {
+    true
 }
 
 fn default_log_path() -> anyhow::Result<PathBuf> {
@@ -556,6 +553,8 @@ mod tests {
             enable_perf: false,
             perf_log: None,
             perf_append: false,
+            permission_mode: None,
+            dangerously_skip_permissions: false,
         };
 
         let resolved = resolve_log_path(&cli).expect("resolve succeeds").expect("path exists");
@@ -578,6 +577,8 @@ mod tests {
             enable_perf: false,
             perf_log: None,
             perf_append: false,
+            permission_mode: None,
+            dangerously_skip_permissions: false,
         };
 
         let resolved = resolve_log_path(&cli).expect("resolve succeeds").expect("path exists");
@@ -601,6 +602,8 @@ mod tests {
             enable_perf: false,
             perf_log: None,
             perf_append: false,
+            permission_mode: None,
+            dangerously_skip_permissions: false,
         };
 
         let resolved = resolve_log_path(&cli).expect("resolve succeeds").expect("path exists");
@@ -622,6 +625,8 @@ mod tests {
             enable_perf: false,
             perf_log: None,
             perf_append: false,
+            permission_mode: None,
+            dangerously_skip_permissions: false,
         };
 
         let resolved = resolve_log_path(&cli).expect("resolve succeeds").expect("path exists");
@@ -643,6 +648,8 @@ mod tests {
             enable_perf: true,
             perf_log: None,
             perf_append: false,
+            permission_mode: None,
+            dangerously_skip_permissions: false,
         };
 
         let resolved = resolve_perf_path(&cli).expect("resolve succeeds").expect("path exists");

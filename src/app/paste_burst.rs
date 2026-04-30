@@ -132,6 +132,19 @@ impl PasteBurstDetector {
     /// Feed a printable character event. Returns whether the caller should
     /// insert it or whether the detector consumed it.
     pub fn on_char(&mut self, ch: char, now: Instant) -> CharAction {
+        // Non-ASCII characters (CJK, etc.) committed by an IME arrive as
+        // multi-byte sequences within microseconds, which the burst detector
+        // would otherwise mistake for a paste and hold the latest character
+        // until the next event. Real pastes containing non-ASCII text arrive
+        // via `Event::Paste` (bracketed paste), not per-char key events, so
+        // it is safe to always pass IME characters through immediately.
+        if !ch.is_ascii() {
+            self.state = BurstState::Idle;
+            self.last_char_time = Some(now);
+            self.push_recent_passthrough(ch, now);
+            return CharAction::Passthrough(ch);
+        }
+
         let is_fast = self
             .last_char_time
             .is_some_and(|last| now.saturating_duration_since(last) <= CHAR_INTERVAL);

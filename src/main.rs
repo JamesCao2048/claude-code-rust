@@ -27,8 +27,27 @@ fn run() -> anyhow::Result<()> {
     lingxi_ascendc::embedded_resources::EmbeddedResourceDir::cleanup_orphans();
     let resource_dir = lingxi_ascendc::embedded_resources::EmbeddedResourceDir::extract()
         .map_err(|e| anyhow::anyhow!("failed to extract embedded resources: {e}"))?;
+    let workspace_dir = cli
+        .dir
+        .clone()
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let resource_path_os = resource_dir.path().as_os_str().to_owned();
+    let pythonpath = match std::env::var_os("PYTHONPATH") {
+        Some(existing) if !existing.is_empty() => {
+            let mut combined = resource_path_os.clone();
+            combined.push(if cfg!(windows) { ";" } else { ":" });
+            combined.push(&existing);
+            combined
+        }
+        _ => resource_path_os,
+    };
     // SAFETY: called before any threads are spawned (single-threaded at this point)
-    unsafe { std::env::set_var("LINGXI_RESOURCE_DIR", resource_dir.path()) };
+    unsafe {
+        std::env::set_var("LINGXI_RESOURCE_DIR", resource_dir.path());
+        std::env::set_var("LINGXI_WORKSPACE", &workspace_dir);
+        std::env::set_var("PYTHONPATH", &pythonpath);
+    }
 
     #[cfg(not(feature = "perf"))]
     if perf_path.is_some() {

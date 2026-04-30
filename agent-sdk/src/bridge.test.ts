@@ -80,21 +80,20 @@ function makeSessionState(): SessionState {
   };
 }
 
-test("availableModesForSession omits conditional modes when unsupported", () => {
+test("availableModesForSession includes bypassPermissions in base list", () => {
   const session = makeSessionState();
   refreshSupportedModesForSession(session);
 
   assert.deepEqual(
     availableModesForSession(session).map((entry) => entry.id),
-    ["default", "acceptEdits", "plan", "dontAsk"],
+    ["default", "acceptEdits", "plan", "dontAsk", "bypassPermissions"],
   );
 });
 
-test("buildModeState includes auto and bypassPermissions when supported", () => {
+test("buildModeState includes auto when current model supports it", () => {
   const session = makeSessionState();
   session.mode = "default";
   session.model = "sonnet";
-  session.supportsBypassPermissionsMode = true;
   session.availableModels = [
     {
       id: "sonnet",
@@ -140,7 +139,7 @@ test("refreshSupportedModesForSession uses resolved current model for auto-mode 
 
   assert.deepEqual(
     availableModesForSession(session).map((entry) => entry.id),
-    ["default", "acceptEdits", "plan", "dontAsk"],
+    ["default", "acceptEdits", "plan", "dontAsk", "bypassPermissions"],
   );
 });
 
@@ -152,7 +151,7 @@ test("refreshSupportedModesForSession retains current mode before capability dat
 
   assert.deepEqual(
     session.supportedModeIds,
-    ["default", "auto", "acceptEdits", "plan", "dontAsk"],
+    ["default", "auto", "acceptEdits", "plan", "dontAsk", "bypassPermissions"],
   );
 });
 
@@ -173,7 +172,7 @@ test("markModeUnavailableForSession prunes rejected runtime mode from session li
   assert.equal(markModeUnavailableForSession(session, "auto"), true);
   assert.deepEqual(
     availableModesForSession(session).map((entry) => entry.id),
-    ["default", "acceptEdits", "plan", "dontAsk"],
+    ["default", "acceptEdits", "plan", "dontAsk", "bypassPermissions"],
   );
 });
 
@@ -591,7 +590,7 @@ test("buildQueryOptions maps launch settings into sdk query options", () => {
   });
   assert.equal(options.model, "haiku");
   assert.equal(options.permissionMode, "plan");
-  assert.equal("allowDangerouslySkipPermissions" in options, false);
+  assert.equal(options.allowDangerouslySkipPermissions, true);
   assert.equal("thinking" in options, false);
   assert.equal("effort" in options, false);
   assert.equal(options.agentProgressSummaries, true);
@@ -621,6 +620,11 @@ test("buildQueryOptions loads embedded Lingxi resources as a local plugin", () =
 
     assert.deepEqual(options.additionalDirectories, ["/tmp/lingxi-resources"]);
     assert.deepEqual(options.plugins, [{ type: "local", path: "/tmp/lingxi-resources" }]);
+    assert.match(
+      options.systemPrompt.append,
+      /Packaged Lingxi resources are available under LINGXI_RESOURCE_DIR=\/tmp\/lingxi-resources/,
+    );
+    assert.match(options.systemPrompt.append, /Resolve built-in resource references such as `evolution\/`/);
   } finally {
     if (previous === undefined) {
       delete process.env.LINGXI_RESOURCE_DIR;
@@ -664,7 +668,7 @@ test("buildQueryOptions forwards settings and maps startup model and permission 
   });
   assert.equal("model" in options, false);
   assert.equal(options.permissionMode, "default");
-  assert.equal("allowDangerouslySkipPermissions" in options, false);
+  assert.equal(options.allowDangerouslySkipPermissions, true);
   assert.equal("thinking" in options, false);
   assert.equal("effort" in options, false);
 });
@@ -709,7 +713,7 @@ test("buildQueryOptions maps auto startup permission mode", () => {
   });
 
   assert.equal(options.permissionMode, "auto");
-  assert.equal("allowDangerouslySkipPermissions" in options, false);
+  assert.equal(options.allowDangerouslySkipPermissions, true);
 });
 
 test("buildQueryOptions enables dangerous skip flag for bypass permissions startup mode", () => {
@@ -748,7 +752,7 @@ test("buildQueryOptions omits startup overrides for default logout path", () => 
 
   assert.equal("model" in options, false);
   assert.equal("permissionMode" in options, false);
-  assert.equal("allowDangerouslySkipPermissions" in options, false);
+  assert.equal(options.allowDangerouslySkipPermissions, true);
   assert.equal("systemPrompt" in options, true);
   assert.deepEqual(options.systemPrompt, {
     type: "preset",

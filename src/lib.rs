@@ -11,6 +11,33 @@ pub mod ui;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
+#[derive(Clone, Copy, Debug, ValueEnum, PartialEq, Eq)]
+pub enum CliPermissionMode {
+    #[value(name = "default")]
+    Default,
+    #[value(name = "acceptEdits", alias = "accept-edits")]
+    AcceptEdits,
+    #[value(name = "plan")]
+    Plan,
+    #[value(name = "dontAsk", alias = "dont-ask")]
+    DontAsk,
+    #[value(name = "bypassPermissions", alias = "bypass-permissions")]
+    BypassPermissions,
+}
+
+impl CliPermissionMode {
+    #[must_use]
+    pub const fn as_stored(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::AcceptEdits => "acceptEdits",
+            Self::Plan => "plan",
+            Self::DontAsk => "dontAsk",
+            Self::BypassPermissions => "bypassPermissions",
+        }
+    }
+}
+
 #[derive(Clone, Debug, ValueEnum, PartialEq, Eq)]
 pub enum DiagnosticsPreset {
     Runtime,
@@ -103,6 +130,27 @@ pub struct Cli {
     /// Append to `--perf-log` instead of truncating on startup.
     #[arg(long)]
     pub perf_append: bool,
+
+    /// Override the startup permission mode. Takes precedence over settings.json.
+    /// Values: default, acceptEdits, plan, dontAsk, bypassPermissions.
+    #[arg(long, value_name = "MODE", value_enum)]
+    pub permission_mode: Option<CliPermissionMode>,
+
+    /// Skip all permission prompts. Equivalent to `--permission-mode bypassPermissions`.
+    #[arg(long, conflicts_with = "permission_mode")]
+    pub dangerously_skip_permissions: bool,
+}
+
+impl Cli {
+    /// Resolve the effective startup permission mode override from CLI flags.
+    /// Returns `None` when neither flag is set and the value should fall back to settings.json.
+    #[must_use]
+    pub fn resolved_permission_mode(&self) -> Option<CliPermissionMode> {
+        if self.dangerously_skip_permissions {
+            return Some(CliPermissionMode::BypassPermissions);
+        }
+        self.permission_mode
+    }
 }
 
 #[derive(Subcommand, Debug, PartialEq, Eq)]
