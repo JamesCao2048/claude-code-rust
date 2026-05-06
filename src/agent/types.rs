@@ -298,7 +298,10 @@ pub enum SessionUpdate {
     ApiRetryUpdate {
         attempt: u64,
         max_retries: u64,
-        retry_delay_ms: u64,
+        // The Anthropic SDK emits a jittered backoff that is a JS `number`,
+        // i.e. f64 — values like 505.4251293783645 are normal. Accept it as
+        // f64 here and round to integer ms when crossing into the model layer.
+        retry_delay_ms: f64,
         error_status: Option<u16>,
         error: ApiRetryError,
     },
@@ -654,5 +657,32 @@ mod tests {
             update,
             SessionUpdate::ApiRetryUpdate { error: ApiRetryError::Unknown, .. }
         ));
+    }
+
+    // Regression: the Anthropic SDK emits a jittered backoff as a JS `number`,
+    // which serializes as a JSON float (e.g. 505.4251293783645). Earlier this
+    // field was typed `u64`, so any non-integer payload made the bridge channel
+    // tear down with "invalid type: floating point ..., expected u64" and the
+    // TUI showed "Failed to establish or maintain the Agent SDK bridge
+    // connection." Accept floats here; rounding to integer ms happens at the
+    // model boundary.
+    #[test]
+    fn api_retry_update_accepts_fractional_retry_delay() {
+        let update: SessionUpdate = serde_json::from_value(serde_json::json!({
+            "type": "api_retry_update",
+            "attempt": 1,
+            "max_retries": 10,
+            "retry_delay_ms": 505.4251293783645_f64,
+            "error_status": null,
+            "error": "unknown"
+        }))
+        .expect("deserialize api retry update with fractional delay");
+
+        match update {
+            SessionUpdate::ApiRetryUpdate { retry_delay_ms, .. } => {
+                assert!((retry_delay_ms - 505.4251293783645).abs() < 1e-9);
+            }
+            _ => panic!("expected ApiRetryUpdate"),
+        }
     }
 }

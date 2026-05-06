@@ -9,12 +9,43 @@ pub mod logging;
 pub mod perf;
 pub mod ui;
 
+/// Inject `env` overrides from `~/.claude/settings.json` and the project-local
+/// `.claude/settings.local.json` into the current process environment.
+///
+/// Mirrors Claude Code (Node) launcher behavior so that values like `ANTHROPIC_AUTH_TOKEN`,
+/// `ANTHROPIC_BASE_URL`, and model overrides configured in `settings.json` reach both this
+/// process (e.g. `has_credentials()`) and the spawned Node bridge (which reads `process.env`).
+///
+/// Existing environment variables already exported by the shell take precedence — settings.json
+/// only fills in the gaps. Returns the keys that were actually injected, for logging.
+///
+/// # Safety
+/// Must be called before any other thread is spawned (i.e. very early in `main`). `set_var`
+/// is not thread-safe on Unix.
+pub unsafe fn apply_settings_env_overrides() -> Vec<String> {
+    let overrides = crate::app::config::store::load_settings_env_overrides();
+    let mut applied = Vec::new();
+    for (key, value) in overrides {
+        if std::env::var_os(&key).is_some() {
+            continue;
+        }
+        // SAFETY: caller guarantees single-threaded context.
+        unsafe {
+            std::env::set_var(&key, &value);
+        }
+        applied.push(key);
+    }
+    applied
+}
+
 use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Clone, Copy, Debug, ValueEnum, PartialEq, Eq)]
 pub enum CliPermissionMode {
     #[value(name = "default")]
     Default,
+    #[value(name = "auto")]
+    Auto,
     #[value(name = "acceptEdits", alias = "accept-edits")]
     AcceptEdits,
     #[value(name = "plan")]
@@ -30,6 +61,7 @@ impl CliPermissionMode {
     pub const fn as_stored(self) -> &'static str {
         match self {
             Self::Default => "default",
+            Self::Auto => "auto",
             Self::AcceptEdits => "acceptEdits",
             Self::Plan => "plan",
             Self::DontAsk => "dontAsk",
@@ -132,7 +164,7 @@ pub struct Cli {
     pub perf_append: bool,
 
     /// Override the startup permission mode. Takes precedence over settings.json.
-    /// Values: default, acceptEdits, plan, dontAsk, bypassPermissions.
+    /// Values: default, auto, acceptEdits, plan, dontAsk, bypassPermissions.
     #[arg(long, value_name = "MODE", value_enum)]
     pub permission_mode: Option<CliPermissionMode>,
 

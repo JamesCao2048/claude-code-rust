@@ -874,11 +874,12 @@ impl ConfigState {
         .value
         {
             ResolvedSettingValue::Choice(ResolvedChoice::Stored(value)) => {
-                DefaultPermissionMode::from_stored(&value).unwrap_or_default()
+                DefaultPermissionMode::from_stored(&value)
+                    .unwrap_or(DefaultPermissionMode::AcceptEdits)
             }
             ResolvedSettingValue::Bool(_)
             | ResolvedSettingValue::Choice(ResolvedChoice::Automatic)
-            | ResolvedSettingValue::Text(_) => DefaultPermissionMode::Default,
+            | ResolvedSettingValue::Text(_) => DefaultPermissionMode::AcceptEdits,
         }
     }
 

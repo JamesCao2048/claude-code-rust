@@ -290,6 +290,38 @@ pub fn set_language(document: &mut Value, value: Option<&str>) {
     write_persisted_setting(document, setting_spec(SettingId::Language), persisted);
 }
 
+/// Collect every string-valued entry from the top-level `env` object of a settings document.
+///
+/// Mirrors Claude Code (Node) launcher behavior: arbitrary key/value pairs under `"env": {}`
+/// in `settings.json` / `settings.local.json` are exposed to the running process so that
+/// `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, custom model overrides, etc. work without
+/// requiring the user to `export` them in their shell.
+pub fn collect_env_overrides(document: &Value) -> Vec<(String, String)> {
+    let Some(env_obj) = document.get("env").and_then(Value::as_object) else {
+        return Vec::new();
+    };
+    env_obj
+        .iter()
+        .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_owned())))
+        .collect()
+}
+
+/// Load `env` overrides from `~/.claude/settings.json` and `<cwd>/.claude/settings.local.json`,
+/// in that order, and return them as a single ordered list. Local entries appear after the
+/// global ones, so callers that apply later wins get the project-local override behavior.
+///
+/// Errors reading or parsing files are silently ignored: this runs at startup, before logging
+/// is fully wired up, and a missing/malformed file should not block app launch.
+#[must_use]
+pub fn load_settings_env_overrides() -> Vec<(String, String)> {
+    let Ok(loaded) = load(None, None) else {
+        return Vec::new();
+    };
+    let mut overrides = collect_env_overrides(&loaded.settings_document);
+    overrides.extend(collect_env_overrides(&loaded.local_settings_document));
+    overrides
+}
+
 pub fn disable_1m_context(document: &Value) -> Result<bool, ()> {
     match read_json_path(document, &["env", CLAUDE_CODE_DISABLE_1M_CONTEXT_ENV]) {
         None => Ok(false),

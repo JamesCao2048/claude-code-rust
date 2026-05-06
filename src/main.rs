@@ -21,7 +21,19 @@ fn main() {
 
 fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    // SAFETY: called before any threads are spawned (single-threaded at this point).
+    // Must run before logging init so that env-driven log filters from settings.json apply,
+    // and before bridge resolution so the spawned Node child inherits ANTHROPIC_* values.
+    let injected_keys = unsafe { lingxi_ascendc::apply_settings_env_overrides() };
     let _logging = lingxi_ascendc::logging::LoggingRuntime::init(&cli)?;
+    if !injected_keys.is_empty() {
+        tracing::info!(
+            target: lingxi_ascendc::logging::targets::APP_LIFECYCLE,
+            event_name = "settings_env_injected",
+            message = "applied env overrides from settings.json",
+            keys = ?injected_keys,
+        );
+    }
     let perf_path = lingxi_ascendc::logging::resolve_perf_path(&cli)?;
 
     lingxi_ascendc::embedded_resources::EmbeddedResourceDir::cleanup_orphans();

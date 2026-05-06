@@ -18,7 +18,7 @@ pub(super) fn resolve_setting_document(
             resolve_bool_setting(document, spec, false)
         }
         SettingId::DefaultPermissionMode => {
-            resolve_string_setting(document, spec, DefaultPermissionMode::Default.as_stored())
+            resolve_string_setting(document, spec, DefaultPermissionMode::AcceptEdits.as_stored())
         }
         SettingId::Language => resolve_language_setting(document, spec),
         SettingId::ShowTips | SettingId::RespectGitignore | SettingId::TerminalProgressBar => {
