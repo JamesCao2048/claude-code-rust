@@ -506,3 +506,428 @@ mod phase_tests {
         assert_eq!(err, HeadlessExit::BridgeClosedUnexpectedly);
     }
 }
+
+// ---------------------------------------------------------------------------
+// T11: streaming-phase loop with watchdog + emitter + prompt-leak detection.
+// ---------------------------------------------------------------------------
+
+use crate::headless::output::Emitter;
+use crate::headless::watchdog::{Watchdog, WatchdogTick};
+
+/// Side-channel back to the bridge that the streaming loop uses when it must
+/// abort an in-flight turn (interactive prompt leaked, idle/hard watchdog
+/// expired). Kept narrow — only `cancel_turn` is needed by T11. T12 will
+/// broaden the trait to cover `shutdown` / `force_kill_and_wait`.
+#[async_trait::async_trait]
+pub trait Sender: Send {
+    /// Best-effort cancellation. Errors are intentionally ignored by the
+    /// streaming loop: we're already on a terminal path and the bridge is
+    /// about to be torn down regardless.
+    async fn cancel_turn(&mut self, session_id: &str) -> anyhow::Result<()>;
+}
+
+/// Drive the streaming phase: pump events through the emitter, reset the idle
+/// watchdog on every event, intercept interactive-prompt leaks, and translate
+/// terminal events / timeouts into a [`HeadlessExit`].
+///
+/// The loop is `tokio::select!` with a `biased;` policy so a watchdog firing
+/// in the same poll as a queued event still gives the event a chance —
+/// matters under paused-time tests where multiple wake-ups land at once.
+///
+/// Non-fatal events (`SlashError`, `RuntimeReloadFailed`, all session
+/// updates, init / connect echoes) are emitted and the loop continues. The
+/// terminal events produce a `HeadlessExit` per design §3.5:
+///
+/// | Event                                        | HeadlessExit                            |
+/// |----------------------------------------------|-----------------------------------------|
+/// | `TurnComplete{Completed|None}`               | `Completed`                             |
+/// | `TurnComplete{other}`                        | `NonCompletedTerminal(Some(other))`     |
+/// | `TurnError`                                  | `NonCompletedTerminal(reason or None)`  |
+/// | `PermissionRequest` / `QuestionRequest` / `ElicitationRequest` | `InteractivePromptLeaked` (cancel_turn first; emit skipped) |
+/// | `AuthRequired`                               | `AuthRequired`                          |
+/// | `ConnectionFailed`                           | `ConnectionFailed`                      |
+/// | EOF / source error                           | `BridgeClosedUnexpectedly`              |
+/// | `WatchdogTick::IdleExpired`                  | `IdleTimeout` (cancel_turn first)       |
+/// | `WatchdogTick::HardExpired`                  | `HardTimeout` (cancel_turn first)       |
+pub async fn streaming_phase(
+    src: &mut dyn EventSource,
+    sender: &mut dyn Sender,
+    emitter: &mut dyn Emitter,
+    watchdog: &mut Watchdog,
+    session_id: &str,
+) -> HeadlessExit {
+    loop {
+        tokio::select! {
+            biased;
+            ev = src.next() => {
+                match ev {
+                    Ok(Some(envelope)) => {
+                        watchdog.note_activity();
+                        match envelope.event {
+                            // Interactive prompts: cancel best-effort and bail.
+                            // The emit is intentionally skipped (design §2 F8) —
+                            // these events are sensitive (raw tool I/O,
+                            // free-form question text) and would only confuse a
+                            // non-interactive consumer that has nowhere to
+                            // forward them.
+                            BridgeEvent::PermissionRequest { .. }
+                            | BridgeEvent::QuestionRequest { .. }
+                            | BridgeEvent::ElicitationRequest { .. } => {
+                                let _ = sender.cancel_turn(session_id).await;
+                                return HeadlessExit::InteractivePromptLeaked;
+                            }
+                            BridgeEvent::TurnComplete { terminal_reason, .. } => {
+                                let _ = emitter.emit_event(&envelope.event);
+                                return match terminal_reason {
+                                    Some(TerminalReason::Completed) | None => {
+                                        HeadlessExit::Completed
+                                    }
+                                    Some(other) => {
+                                        HeadlessExit::NonCompletedTerminal(Some(other))
+                                    }
+                                };
+                            }
+                            BridgeEvent::TurnError { terminal_reason, .. } => {
+                                let _ = emitter.emit_event(&envelope.event);
+                                return HeadlessExit::NonCompletedTerminal(terminal_reason);
+                            }
+                            BridgeEvent::AuthRequired { .. } => {
+                                let _ = emitter.emit_event(&envelope.event);
+                                return HeadlessExit::AuthRequired;
+                            }
+                            BridgeEvent::ConnectionFailed { .. } => {
+                                let _ = emitter.emit_event(&envelope.event);
+                                return HeadlessExit::ConnectionFailed;
+                            }
+                            // Non-fatal — emit and continue.
+                            // SlashError / RuntimeReloadFailed are explicitly
+                            // non-terminal per design §2 F8; SessionUpdate /
+                            // Connected / Initialized echoes flow through here
+                            // too.
+                            _ => {
+                                let _ = emitter.emit_event(&envelope.event);
+                            }
+                        }
+                    }
+                    Ok(None) | Err(_) => return HeadlessExit::BridgeClosedUnexpectedly,
+                }
+            }
+            tick = watchdog.tick() => {
+                match tick {
+                    WatchdogTick::IdleExpired => {
+                        let _ = sender.cancel_turn(session_id).await;
+                        return HeadlessExit::IdleTimeout;
+                    }
+                    WatchdogTick::HardExpired => {
+                        let _ = sender.cancel_turn(session_id).await;
+                        return HeadlessExit::HardTimeout;
+                    }
+                    WatchdogTick::Continue => {
+                        // Spurious wake — keep looping. `Watchdog::tick` only
+                        // returns `Continue` when both deadlines are still in
+                        // the future; defensive in case the timer wakes early.
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod streaming_tests {
+    use super::*;
+    use crate::agent::types::{ContentBlock, SessionUpdate};
+    use crate::headless::output::Emitter;
+    use std::collections::VecDeque;
+    use std::sync::{Arc, Mutex};
+
+    /// Mock `EventSource` for streaming tests. Mirrors `phase_tests::MockSource`
+    /// but lives in this module so we can extend it without disturbing T10's
+    /// fixtures. Each item is `(Option<EventEnvelope>, sleep_before)`; after
+    /// the queue drains, every subsequent `next()` returns `Ok(None)`.
+    struct MockEventSource {
+        queue: VecDeque<(Option<EventEnvelope>, Duration)>,
+    }
+
+    impl MockEventSource {
+        fn new(items: Vec<(Option<EventEnvelope>, Duration)>) -> Self {
+            Self { queue: items.into() }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl EventSource for MockEventSource {
+        async fn next(&mut self) -> anyhow::Result<Option<EventEnvelope>> {
+            match self.queue.pop_front() {
+                Some((evt, sleep)) => {
+                    if !sleep.is_zero() {
+                        tokio::time::sleep(sleep).await;
+                    }
+                    Ok(evt)
+                }
+                None => Ok(None),
+            }
+        }
+    }
+
+    /// Records every `cancel_turn` call so tests can assert the exact session
+    /// id and call count. `Arc<Mutex<…>>` keeps the recorder shareable: tests
+    /// hold a clone for assertions while the sender owns one for writes.
+    #[derive(Clone, Default)]
+    struct MockSender {
+        cancels: Arc<Mutex<Vec<String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl Sender for MockSender {
+        async fn cancel_turn(&mut self, session_id: &str) -> anyhow::Result<()> {
+            self.cancels.lock().unwrap().push(session_id.to_owned());
+            Ok(())
+        }
+    }
+
+    /// Records every `emit_event` call by `event_name` for ordering assertions.
+    /// `emit_warning` / `emit_error` / `finish` are no-ops; the streaming loop
+    /// never calls them today.
+    #[derive(Clone, Default)]
+    struct MockEmitter {
+        events: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl Emitter for MockEmitter {
+        fn emit_event(&mut self, ev: &BridgeEvent) -> std::io::Result<()> {
+            self.events.lock().unwrap().push(ev.event_name().to_owned());
+            Ok(())
+        }
+        fn emit_warning(&mut self, _msg: &str) -> std::io::Result<()> {
+            Ok(())
+        }
+        fn emit_error(&mut self, _msg: &str) -> std::io::Result<()> {
+            Ok(())
+        }
+        fn finish(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn agent_message_envelope(text: &str) -> EventEnvelope {
+        EventEnvelope {
+            request_id: None,
+            event: BridgeEvent::SessionUpdate {
+                session_id: "s1".into(),
+                update: SessionUpdate::AgentMessageChunk {
+                    content: ContentBlock::Text { text: text.into() },
+                },
+            },
+        }
+    }
+
+    fn turn_complete_envelope(reason: Option<TerminalReason>) -> EventEnvelope {
+        EventEnvelope {
+            request_id: None,
+            event: BridgeEvent::TurnComplete {
+                session_id: "s1".into(),
+                terminal_reason: reason,
+            },
+        }
+    }
+
+    fn turn_error_envelope(reason: Option<TerminalReason>) -> EventEnvelope {
+        EventEnvelope {
+            request_id: None,
+            event: BridgeEvent::TurnError {
+                session_id: "s1".into(),
+                message: "boom".into(),
+                error_kind: None,
+                sdk_result_subtype: None,
+                assistant_error: None,
+                terminal_reason: reason,
+            },
+        }
+    }
+
+    fn slash_error_envelope() -> EventEnvelope {
+        EventEnvelope {
+            request_id: None,
+            event: BridgeEvent::SlashError {
+                session_id: "s1".into(),
+                message: "bad slash".into(),
+            },
+        }
+    }
+
+    fn permission_request_envelope() -> EventEnvelope {
+        use crate::agent::types::{PermissionOption, PermissionRequest, ToolCall};
+        EventEnvelope {
+            request_id: None,
+            event: BridgeEvent::PermissionRequest {
+                session_id: "s1".into(),
+                request: PermissionRequest {
+                    tool_call: ToolCall {
+                        tool_call_id: "tc1".into(),
+                        title: "ls".into(),
+                        kind: "BashTool".into(),
+                        status: "in_progress".into(),
+                        content: Vec::new(),
+                        raw_input: None,
+                        raw_output: None,
+                        output_metadata: None,
+                        task_metadata: None,
+                        locations: Vec::new(),
+                        meta: None,
+                    },
+                    options: vec![PermissionOption {
+                        option_id: "allow".into(),
+                        name: "Allow".into(),
+                        description: None,
+                        kind: "allow_once".into(),
+                    }],
+                    display: None,
+                },
+            },
+        }
+    }
+
+    // ---- happy path & terminal events ----
+
+    #[tokio::test(start_paused = true)]
+    async fn happy_path_chunk_then_complete_returns_completed() {
+        let mut src = MockEventSource::new(vec![
+            (Some(agent_message_envelope("hi")), Duration::ZERO),
+            (
+                Some(turn_complete_envelope(Some(TerminalReason::Completed))),
+                Duration::ZERO,
+            ),
+        ]);
+        let mut sender = MockSender::default();
+        let mut emitter = MockEmitter::default();
+        let mut wd = Watchdog::new(Duration::from_secs(60), None);
+
+        let exit = streaming_phase(&mut src, &mut sender, &mut emitter, &mut wd, "s1").await;
+
+        assert_eq!(exit, HeadlessExit::Completed);
+        let events = emitter.events.lock().unwrap().clone();
+        assert_eq!(events, vec!["session_update", "turn_complete"]);
+        assert!(
+            sender.cancels.lock().unwrap().is_empty(),
+            "happy path must not call cancel_turn"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn permission_request_returns_prompt_leaked_and_cancels() {
+        let mut src = MockEventSource::new(vec![(
+            Some(permission_request_envelope()),
+            Duration::ZERO,
+        )]);
+        let mut sender = MockSender::default();
+        let mut emitter = MockEmitter::default();
+        let mut wd = Watchdog::new(Duration::from_secs(60), None);
+
+        let exit = streaming_phase(&mut src, &mut sender, &mut emitter, &mut wd, "s1").await;
+
+        assert_eq!(exit, HeadlessExit::InteractivePromptLeaked);
+        assert!(
+            emitter.events.lock().unwrap().is_empty(),
+            "interactive prompt must not be emitted"
+        );
+        let cancels = sender.cancels.lock().unwrap().clone();
+        assert_eq!(cancels, vec!["s1".to_owned()]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn turn_error_returns_non_completed_terminal_with_reason() {
+        let mut src = MockEventSource::new(vec![(
+            Some(turn_error_envelope(None)),
+            Duration::ZERO,
+        )]);
+        let mut sender = MockSender::default();
+        let mut emitter = MockEmitter::default();
+        let mut wd = Watchdog::new(Duration::from_secs(60), None);
+
+        let exit = streaming_phase(&mut src, &mut sender, &mut emitter, &mut wd, "s1").await;
+
+        assert_eq!(exit, HeadlessExit::NonCompletedTerminal(None));
+        assert_eq!(exit.code(), 1);
+        let events = emitter.events.lock().unwrap().clone();
+        assert_eq!(events, vec!["turn_error"]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn slash_error_is_non_fatal_and_loop_continues() {
+        let mut src = MockEventSource::new(vec![
+            (Some(slash_error_envelope()), Duration::ZERO),
+            (
+                Some(turn_complete_envelope(Some(TerminalReason::Completed))),
+                Duration::ZERO,
+            ),
+        ]);
+        let mut sender = MockSender::default();
+        let mut emitter = MockEmitter::default();
+        let mut wd = Watchdog::new(Duration::from_secs(60), None);
+
+        let exit = streaming_phase(&mut src, &mut sender, &mut emitter, &mut wd, "s1").await;
+
+        assert_eq!(exit, HeadlessExit::Completed);
+        let events = emitter.events.lock().unwrap().clone();
+        assert_eq!(events, vec!["slash_error", "turn_complete"]);
+        assert!(sender.cancels.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn eof_after_chunk_is_bridge_closed_unexpectedly() {
+        let mut src = MockEventSource::new(vec![(
+            Some(agent_message_envelope("partial")),
+            Duration::ZERO,
+        )]);
+        let mut sender = MockSender::default();
+        let mut emitter = MockEmitter::default();
+        let mut wd = Watchdog::new(Duration::from_secs(60), None);
+
+        let exit = streaming_phase(&mut src, &mut sender, &mut emitter, &mut wd, "s1").await;
+
+        assert_eq!(exit, HeadlessExit::BridgeClosedUnexpectedly);
+        assert_eq!(exit.code(), 5);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn idle_watchdog_expiration_cancels_turn_and_returns_idle_timeout() {
+        // Source never yields — only the watchdog wakes us up.
+        let mut src = MockEventSource::new(vec![(None, Duration::from_secs(3600))]);
+        let mut sender = MockSender::default();
+        let mut emitter = MockEmitter::default();
+        let mut wd = Watchdog::new(Duration::from_secs(2), None);
+
+        let exit = streaming_phase(&mut src, &mut sender, &mut emitter, &mut wd, "s1").await;
+
+        assert_eq!(exit, HeadlessExit::IdleTimeout);
+        assert_eq!(exit.code(), 124);
+        let cancels = sender.cancels.lock().unwrap().clone();
+        assert_eq!(cancels, vec!["s1".to_owned()]);
+        assert!(
+            emitter.events.lock().unwrap().is_empty(),
+            "watchdog path must not emit events"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn turn_complete_max_turns_returns_non_completed_terminal_max_turns() {
+        let mut src = MockEventSource::new(vec![(
+            Some(turn_complete_envelope(Some(TerminalReason::MaxTurns))),
+            Duration::ZERO,
+        )]);
+        let mut sender = MockSender::default();
+        let mut emitter = MockEmitter::default();
+        let mut wd = Watchdog::new(Duration::from_secs(60), None);
+
+        let exit = streaming_phase(&mut src, &mut sender, &mut emitter, &mut wd, "s1").await;
+
+        assert_eq!(
+            exit,
+            HeadlessExit::NonCompletedTerminal(Some(TerminalReason::MaxTurns))
+        );
+        let events = emitter.events.lock().unwrap().clone();
+        assert_eq!(events, vec!["turn_complete"]);
+        assert!(sender.cancels.lock().unwrap().is_empty());
+    }
+}
