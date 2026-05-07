@@ -302,12 +302,33 @@ async fn write_command_envelope(
 async fn read_event_envelope(
     stdout: &mut tokio::io::Lines<BufReader<ChildStdout>>,
 ) -> anyhow::Result<Option<EventEnvelope>> {
-    let Some(line) = stdout.next_line().await.context("failed to read bridge stdout")? else {
+    let Some(line) = stdout.next_line().await.map_err(|err| {
+        tracing::error!(
+            target: crate::logging::targets::BRIDGE_PROTOCOL,
+            event_name = "bridge_stdout_read_failed",
+            message = "failed to read bridge stdout",
+            outcome = "failure",
+            error = %err,
+        );
+        anyhow::Error::new(err).context("failed to read bridge stdout")
+    })?
+    else {
         return Ok(None);
     };
     let size_bytes = line.len() + 1;
-    let event: EventEnvelope =
-        serde_json::from_str(&line).context("failed to decode bridge event json")?;
+    let event: EventEnvelope = serde_json::from_str(&line).map_err(|err| {
+        let preview = line.chars().take(240).collect::<String>();
+        tracing::error!(
+            target: crate::logging::targets::BRIDGE_PROTOCOL,
+            event_name = "bridge_event_decode_failed",
+            message = "failed to decode bridge event json",
+            outcome = "failure",
+            size_bytes,
+            preview = %preview,
+            error = %err,
+        );
+        anyhow::Error::new(err).context("failed to decode bridge event json")
+    })?;
     log_bridge_event_received(&event, size_bytes);
     Ok(Some(event))
 }
