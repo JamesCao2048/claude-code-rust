@@ -206,12 +206,60 @@ impl BridgeClient {
         self.child.wait().await.context("failed to wait for bridge process")
     }
 
+    /// Split the client into independent reader (stdout) and writer (child + stdin)
+    /// halves. Used by the headless driver, where the streaming loop needs to
+    /// `recv()` from one borrow while a watchdog timer can fire and trigger
+    /// `cancel_turn` via a separate borrow at the same time. TUI mode keeps
+    /// using `BridgeClient` directly via the `AgentConnection` mpsc plumbing.
+    #[must_use]
+    pub fn split(self) -> (BridgeWriter, BridgeReader) {
+        (
+            BridgeWriter { child: self.child, stdin: self.stdin },
+            BridgeReader { stdout: self.stdout },
+        )
+    }
+}
+
+/// Read-only half of [`BridgeClient`] — owns just stdout. Produced by
+/// [`BridgeClient::split`].
+pub struct BridgeReader {
+    stdout: tokio::io::Lines<BufReader<ChildStdout>>,
+}
+
+impl BridgeReader {
+    pub async fn recv(&mut self) -> anyhow::Result<Option<EventEnvelope>> {
+        read_event_envelope(&mut self.stdout).await
+    }
+}
+
+/// Write-and-lifecycle half of [`BridgeClient`] — owns the child handle and
+/// stdin. Produced by [`BridgeClient::split`].
+pub struct BridgeWriter {
+    child: Child,
+    stdin: BufWriter<ChildStdin>,
+}
+
+impl BridgeWriter {
+    pub async fn send(&mut self, envelope: CommandEnvelope) -> anyhow::Result<()> {
+        write_command_envelope(&mut self.stdin, envelope).await
+    }
+
+    pub async fn shutdown(&mut self) -> anyhow::Result<()> {
+        tracing::info!(
+            target: crate::logging::targets::BRIDGE_LIFECYCLE,
+            event_name = "bridge_shutdown_requested",
+            message = "requesting bridge shutdown",
+            outcome = "start",
+        );
+        self.send(CommandEnvelope { request_id: None, command: BridgeCommand::Shutdown }).await
+    }
+
     /// Send `Shutdown` and wait up to `grace` for the child to exit gracefully.
     /// On timeout, hard-kill (`start_kill` then final `wait`). Always reaps the
     /// child — never returns leaving a zombie. Used by the headless driver
     /// (design §5.5 / F2). The graceful path also covers the SIGPIPE case where
-    /// the bridge has already closed stdin: the `shutdown` write will error,
-    /// we ignore it and proceed to wait.
+    /// the bridge has already closed stdin: the `shutdown` write will error and
+    /// we ignore it, then proceed to wait.
     pub async fn shutdown_with_grace(
         mut self,
         grace: std::time::Duration,
@@ -231,6 +279,37 @@ impl BridgeClient {
             }
         }
     }
+}
+
+async fn write_command_envelope(
+    stdin: &mut BufWriter<ChildStdin>,
+    envelope: CommandEnvelope,
+) -> anyhow::Result<()> {
+    let request_id = envelope.request_id.as_deref().unwrap_or("");
+    let bridge_command = envelope.command.command_name();
+    let session_id = envelope.command.session_id().unwrap_or("");
+    let tool_call_id = envelope.command.tool_call_id().unwrap_or("");
+    let line = serde_json::to_string(&envelope)
+        .context("failed to serialize bridge command")?;
+    let size_bytes = line.len() + 1;
+    stdin.write_all(line.as_bytes()).await.context("failed to write bridge command")?;
+    stdin.write_all(b"\n").await.context("failed to write bridge newline")?;
+    stdin.flush().await.context("failed to flush bridge stdin")?;
+    log_bridge_command_sent(bridge_command, request_id, session_id, tool_call_id, size_bytes);
+    Ok(())
+}
+
+async fn read_event_envelope(
+    stdout: &mut tokio::io::Lines<BufReader<ChildStdout>>,
+) -> anyhow::Result<Option<EventEnvelope>> {
+    let Some(line) = stdout.next_line().await.context("failed to read bridge stdout")? else {
+        return Ok(None);
+    };
+    let size_bytes = line.len() + 1;
+    let event: EventEnvelope =
+        serde_json::from_str(&line).context("failed to decode bridge event json")?;
+    log_bridge_event_received(&event, size_bytes);
+    Ok(Some(event))
 }
 
 fn log_bridge_command_sent(

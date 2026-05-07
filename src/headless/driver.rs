@@ -950,11 +950,35 @@ mod streaming_tests {
 /// Tear the bridge down. Sends `Shutdown`, waits up to `SHUTDOWN_TIMEOUT_SECS`
 /// for graceful exit, then hard-kills.
 pub async fn shutdown_phase(
-    client: crate::agent::client::BridgeClient,
+    writer: crate::agent::client::BridgeWriter,
 ) -> anyhow::Result<std::process::ExitStatus> {
-    client
+    writer
         .shutdown_with_grace(std::time::Duration::from_secs(SHUTDOWN_TIMEOUT_SECS))
         .await
+}
+
+// Production EventSource / Sender impls for the split halves of BridgeClient.
+// Tests use mocks (see `phase_tests` and `streaming_tests` above); production
+// flows through these. Lives in driver.rs so the trait definitions, the
+// production impls, and the tests share one file.
+
+#[async_trait::async_trait]
+impl EventSource for crate::agent::client::BridgeReader {
+    async fn next(&mut self) -> anyhow::Result<Option<EventEnvelope>> {
+        self.recv().await
+    }
+}
+
+#[async_trait::async_trait]
+impl Sender for crate::agent::client::BridgeWriter {
+    async fn cancel_turn(&mut self, session_id: &str) -> anyhow::Result<()> {
+        use crate::agent::wire::{BridgeCommand, CommandEnvelope};
+        self.send(CommandEnvelope {
+            request_id: None,
+            command: BridgeCommand::CancelTurn { session_id: session_id.to_owned() },
+        })
+        .await
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -2,24 +2,27 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use clap::Parser;
-use lingxi_ascendc::Cli;
 use lingxi_ascendc::error::AppError;
+use lingxi_ascendc::{Cli, Command};
 use std::time::Instant;
 use tracing::info_span;
 
 #[allow(clippy::exit)]
 fn main() {
-    if let Err(err) = run() {
-        if let Some(app_error) = extract_app_error(&err) {
-            eprintln!("{}", app_error.user_message());
-            std::process::exit(app_error.exit_code());
+    match run() {
+        Ok(exit_code) => std::process::exit(exit_code),
+        Err(err) => {
+            if let Some(app_error) = extract_app_error(&err) {
+                eprintln!("{}", app_error.user_message());
+                std::process::exit(app_error.exit_code());
+            }
+            eprintln!("{err}");
+            std::process::exit(1);
         }
-        eprintln!("{err}");
-        std::process::exit(1);
     }
 }
 
-fn run() -> anyhow::Result<()> {
+fn run() -> anyhow::Result<i32> {
     let cli = Cli::parse();
     // SAFETY: called before any threads are spawned (single-threaded at this point).
     // Must run before logging init so that env-driven log filters from settings.json apply,
@@ -96,6 +99,30 @@ fn run() -> anyhow::Result<()> {
     let rt = tokio::runtime::Runtime::new()?;
     let local_set = tokio::task::LocalSet::new();
 
+    // Headless `print` / `-p` short-circuits the TUI: spawn the bridge
+    // directly, stream events to stdout/stderr, exit with a code from
+    // design §3.5. See `lingxi_ascendc::headless::run_print`.
+    if cli.print.is_some() || matches!(cli.command, Some(Command::Print(_))) {
+        let print_args = match cli.resolve_command()? {
+            Command::Print(args) => args,
+            other => unreachable!("expected Print, got {other:?}"),
+        };
+        let cli_perm = cli.permission_mode;
+        let cli_skip = cli.dangerously_skip_permissions;
+        let bridge_script = cli.bridge_script.clone();
+        let exit_code = rt.block_on(local_set.run_until(async move {
+            lingxi_ascendc::headless::run_print(
+                &print_args,
+                &workspace_dir,
+                bridge_script.as_deref(),
+                cli_perm,
+                cli_skip,
+            )
+            .await
+        }));
+        return Ok(exit_code);
+    }
+
     rt.block_on(local_set.run_until(async move {
         // Phase 1: create app in Connecting state (instant, no I/O)
         let mut app = lingxi_ascendc::app::create_app(&cli);
@@ -114,7 +141,7 @@ fn run() -> anyhow::Result<()> {
             return Err(anyhow::Error::new(app_error));
         }
 
-        result
+        result.map(|()| 0)
     }))
 }
 
