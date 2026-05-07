@@ -931,3 +931,105 @@ mod streaming_tests {
         assert!(sender.cancels.lock().unwrap().is_empty());
     }
 }
+
+// ---------------------------------------------------------------------------
+// T12: shutdown sequence.
+//
+// `BridgeClient::shutdown_with_grace` (in `agent/client.rs`) does the actual
+// work — sends `Shutdown`, waits up to `grace`, then `SIGKILL`s on timeout.
+// Driver-side this is a one-liner; we keep it here so callers don't need to
+// reach into `agent::client` themselves and so future shutdown logic (extra
+// teardown signals, telemetry) can land in one spot.
+//
+// The hang-after-result regression (design §9 test 3) is covered by the T18
+// integration test against the stub bridge — unit-testing the timeout path
+// in isolation would mean abstracting `tokio::process::Child`, which is a lot
+// of trait machinery for no extra signal beyond what T18 already provides.
+// ---------------------------------------------------------------------------
+
+/// Tear the bridge down. Sends `Shutdown`, waits up to `SHUTDOWN_TIMEOUT_SECS`
+/// for graceful exit, then hard-kills.
+pub async fn shutdown_phase(
+    client: crate::agent::client::BridgeClient,
+) -> anyhow::Result<std::process::ExitStatus> {
+    client
+        .shutdown_with_grace(std::time::Duration::from_secs(SHUTDOWN_TIMEOUT_SECS))
+        .await
+}
+
+// ---------------------------------------------------------------------------
+// T13: exit-code mapping golden tests.
+//
+// Locks `HeadlessExit::code()` against design §3.5. If a future change adds a
+// new variant or shifts a code, these tests force the change to be deliberate.
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod exit_code_tests {
+    use super::*;
+
+    #[test]
+    fn completed_exits_zero() {
+        assert_eq!(HeadlessExit::Completed.code(), 0);
+    }
+
+    #[test]
+    fn non_completed_terminal_exits_one_for_every_terminal_reason() {
+        // Cover every TerminalReason variant; all non-Completed reasons → 1.
+        let reasons = [
+            TerminalReason::BlockingLimit,
+            TerminalReason::RapidRefillBreaker,
+            TerminalReason::PromptTooLong,
+            TerminalReason::ImageError,
+            TerminalReason::ModelError,
+            TerminalReason::AbortedStreaming,
+            TerminalReason::AbortedTools,
+            TerminalReason::StopHookPrevented,
+            TerminalReason::HookStopped,
+            TerminalReason::ToolDeferred,
+            TerminalReason::MaxTurns,
+        ];
+        for r in reasons {
+            assert_eq!(
+                HeadlessExit::NonCompletedTerminal(Some(r)).code(),
+                1,
+                "{r:?} should map to exit 1"
+            );
+        }
+        // Bare TurnError with no reason: also 1.
+        assert_eq!(HeadlessExit::NonCompletedTerminal(None).code(), 1);
+    }
+
+    #[test]
+    fn interactive_prompt_leak_exits_two() {
+        assert_eq!(HeadlessExit::InteractivePromptLeaked.code(), 2);
+    }
+
+    #[test]
+    fn auth_required_exits_three() {
+        assert_eq!(HeadlessExit::AuthRequired.code(), 3);
+    }
+
+    #[test]
+    fn connection_failed_exits_four() {
+        // Same code for live ConnectionFailed event AND init/connect timeouts —
+        // the driver maps the timeouts onto this variant in init/connect_phase.
+        assert_eq!(HeadlessExit::ConnectionFailed.code(), 4);
+    }
+
+    #[test]
+    fn bridge_eof_exits_five() {
+        assert_eq!(HeadlessExit::BridgeClosedUnexpectedly.code(), 5);
+    }
+
+    #[test]
+    fn usage_error_exits_64() {
+        assert_eq!(HeadlessExit::UsageError.code(), 64);
+    }
+
+    #[test]
+    fn idle_and_hard_timeout_both_exit_124() {
+        assert_eq!(HeadlessExit::IdleTimeout.code(), 124);
+        assert_eq!(HeadlessExit::HardTimeout.code(), 124);
+    }
+}

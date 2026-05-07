@@ -205,6 +205,32 @@ impl BridgeClient {
     pub async fn wait(mut self) -> anyhow::Result<std::process::ExitStatus> {
         self.child.wait().await.context("failed to wait for bridge process")
     }
+
+    /// Send `Shutdown` and wait up to `grace` for the child to exit gracefully.
+    /// On timeout, hard-kill (`start_kill` then final `wait`). Always reaps the
+    /// child — never returns leaving a zombie. Used by the headless driver
+    /// (design §5.5 / F2). The graceful path also covers the SIGPIPE case where
+    /// the bridge has already closed stdin: the `shutdown` write will error,
+    /// we ignore it and proceed to wait.
+    pub async fn shutdown_with_grace(
+        mut self,
+        grace: std::time::Duration,
+    ) -> anyhow::Result<std::process::ExitStatus> {
+        let _ = self.shutdown().await;
+        match tokio::time::timeout(grace, self.child.wait()).await {
+            Ok(result) => result.context("graceful wait failed"),
+            Err(_) => {
+                tracing::warn!(
+                    target: crate::logging::targets::BRIDGE_LIFECYCLE,
+                    event_name = "bridge_shutdown_force_kill",
+                    message = "shutdown grace expired, sending SIGKILL",
+                    grace_secs = grace.as_secs(),
+                );
+                self.child.start_kill().context("start_kill failed")?;
+                self.child.wait().await.context("post-kill wait failed")
+            }
+        }
+    }
 }
 
 fn log_bridge_command_sent(
