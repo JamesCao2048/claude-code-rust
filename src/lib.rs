@@ -5,6 +5,7 @@ pub mod agent;
 pub mod app;
 pub mod embedded_resources;
 pub mod error;
+pub mod headless;
 pub mod logging;
 pub mod perf;
 pub mod ui;
