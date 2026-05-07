@@ -32,6 +32,7 @@ pub fn try_handle_submit(app: &mut App, text: &str) -> bool {
     match parsed.name {
         "/1m-context" => handle_1m_context_submit(app, &parsed.args),
         "/cancel" => handle_cancel_submit(app),
+        "/clear" => handle_clear_submit(app, &parsed.args),
         "/compact" => handle_compact_submit(app, &parsed.args),
         "/config" => handle_config_submit(app, &parsed.args),
         "/docs" => handle_docs_submit(app, &parsed.args),
@@ -292,6 +293,25 @@ fn handle_cancel_submit(app: &mut App) -> bool {
     if let Err(message) = crate::app::input_submit::request_cancel(app, CancelOrigin::Manual) {
         push_system_message(app, format!("Failed to run /cancel: {message}"));
     }
+    true
+}
+
+fn handle_clear_submit(app: &mut App, args: &[&str]) -> bool {
+    if !args.is_empty() {
+        push_system_message(app, "Usage: /clear");
+        return true;
+    }
+
+    app.clear_messages_tracked();
+    app.is_compacting = false;
+    app.pending_compact_clear = false;
+    app.viewport.engage_auto_scroll();
+    app.needs_redraw = true;
+    push_system_message_with_severity(
+        app,
+        Some(SystemSeverity::Info),
+        "Conversation cleared.",
+    );
     true
 }
 

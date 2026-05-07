@@ -54,7 +54,11 @@ pub fn handle_terminal_event(app: &mut App, event: Event) {
 }
 
 fn should_dispatch_key_event(key: crossterm::event::KeyEvent) -> bool {
-    key.kind == KeyEventKind::Press
+    // Press handles initial keystrokes; Repeat keeps long-press (held arrows,
+    // backspace, etc.) responsive when the kitty REPORT_EVENT_TYPES protocol
+    // is active. Release is only forwarded for the clipboard paste shortcut
+    // because Ctrl+V on macOS/Linux is observed reliably only on release.
+    matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat)
         || (key.kind == KeyEventKind::Release && super::keys::is_clipboard_paste_shortcut(key))
 }
 
@@ -4931,6 +4935,17 @@ mod tests {
             state: crossterm::event::KeyEventState::NONE,
         };
         assert!(!should_dispatch_key_event(key));
+    }
+
+    #[test]
+    fn arrow_key_repeat_is_dispatched_for_long_press() {
+        let key = crossterm::event::KeyEvent {
+            code: KeyCode::Left,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Repeat,
+            state: crossterm::event::KeyEventState::NONE,
+        };
+        assert!(should_dispatch_key_event(key));
     }
 
     #[test]

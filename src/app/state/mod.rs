@@ -260,6 +260,10 @@ pub struct App {
     /// If another editing-like event or a paste payload arrives in the same
     /// drain cycle, this is cleared and no submit occurs.
     pub pending_submit: Option<InputSnapshot>,
+    /// Timestamp of the most recent Esc keystroke that did NOT clear the
+    /// input. A second Esc within [`ESC_DOUBLE_CLEAR_WINDOW`] clears the
+    /// input buffer (matches the readline-style "Esc Esc" line clear).
+    pub last_esc_at: Option<std::time::Instant>,
     /// Submitted prompt history, oldest first. Pressing Up at the top row of
     /// the input recalls the previous entry; Down walks back toward the
     /// in-progress draft. Capped at [`MAX_PROMPT_HISTORY`] entries.
@@ -900,6 +904,7 @@ impl App {
             slash: None,
             subagent: None,
             pending_submit: None,
+            last_esc_at: None,
             prompt_history: Vec::new(),
             prompt_history_cursor: None,
             prompt_history_draft: None,

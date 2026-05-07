@@ -197,6 +197,7 @@ pub fn create_app(cli: &Cli) -> App {
         slash: None,
         subagent: None,
         pending_submit: None,
+        last_esc_at: None,
         prompt_history: Vec::new(),
         prompt_history_cursor: None,
         prompt_history_draft: None,

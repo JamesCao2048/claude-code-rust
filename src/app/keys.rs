@@ -19,10 +19,13 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 #[cfg(test)]
 use std::cell::Cell;
 use std::rc::Rc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 const HELP_TAB_PREV_KEY: KeyCode = KeyCode::Left;
 const HELP_TAB_NEXT_KEY: KeyCode = KeyCode::Right;
+
+/// Maximum gap between two Esc keystrokes to count as a "double Esc" line clear.
+const ESC_DOUBLE_CLEAR_WINDOW: Duration = Duration::from_millis(600);
 
 fn is_ctrl_shortcut(modifiers: KeyModifiers) -> bool {
     modifiers.contains(KeyModifiers::CONTROL) && !modifiers.contains(KeyModifiers::ALT)
@@ -335,6 +338,11 @@ fn should_reclaim_input_focus_before_inline_interaction(app: &App, key: KeyEvent
 }
 
 fn handle_normal_key_actions(app: &mut App, key: KeyEvent) -> bool {
+    // Any non-Esc key breaks the Esc-Esc pairing window so a stale prior Esc
+    // doesn't combine with a much later one.
+    if !matches!(key.code, KeyCode::Esc) {
+        app.last_esc_at = None;
+    }
     if handle_turn_control_key(app, key) {
         return true;
     }
@@ -377,18 +385,37 @@ fn handle_turn_control_key(app: &mut App, key: KeyEvent) -> bool {
     }
     if app.focus_owner() == FocusOwner::TodoList {
         app.release_focus_target(FocusTarget::TodoList);
+        app.last_esc_at = None;
         return true;
     }
-    if matches!(app.status, AppStatus::Thinking | AppStatus::Running)
-        && let Err(message) = super::input_submit::request_cancel(app, CancelOrigin::Manual)
-    {
-        tracing::error!(
-            target: crate::logging::targets::APP_INPUT,
-            event_name = "cancel_request_failed",
-            message = "failed to send manual cancel request",
-            outcome = "failure",
-            error_message = %message,
-        );
+    if matches!(app.status, AppStatus::Thinking | AppStatus::Running) {
+        if let Err(message) = super::input_submit::request_cancel(app, CancelOrigin::Manual) {
+            tracing::error!(
+                target: crate::logging::targets::APP_INPUT,
+                event_name = "cancel_request_failed",
+                message = "failed to send manual cancel request",
+                outcome = "failure",
+                error_message = %message,
+            );
+        }
+        app.last_esc_at = None;
+        return true;
+    }
+
+    // Esc-Esc: when the input has content, a second Esc within
+    // ESC_DOUBLE_CLEAR_WINDOW clears the entire input buffer.
+    let now = Instant::now();
+    let recent = app
+        .last_esc_at
+        .is_some_and(|prev| now.saturating_duration_since(prev) <= ESC_DOUBLE_CLEAR_WINDOW);
+    if recent && !app.input.is_empty() {
+        app.input.clear();
+        app.prompt_history_cursor = None;
+        app.prompt_history_draft = None;
+        app.last_esc_at = None;
+        app.needs_redraw = true;
+    } else {
+        app.last_esc_at = Some(now);
     }
     true
 }
@@ -726,6 +753,18 @@ pub(super) fn reclaim_input_from_inline_prompt_if_needed(app: &mut App) {
 }
 
 fn handle_editing_key(app: &mut App, key: KeyEvent) -> bool {
+    if is_ctrl_char_shortcut(key, 'u') && app.focus_owner() != FocusOwner::TodoList {
+        reclaim_input_from_inline_prompt_if_needed(app);
+        if app.input.is_empty() && app.pending_images.is_empty() {
+            return true;
+        }
+        app.input.clear();
+        app.pending_images.clear();
+        app.prompt_history_cursor = None;
+        app.prompt_history_draft = None;
+        app.needs_redraw = true;
+        return true;
+    }
     match (key.code, key.modifiers) {
         (KeyCode::Backspace, m)
             if app.focus_owner() != FocusOwner::TodoList
@@ -1127,6 +1166,80 @@ mod tests {
     }
     fn down_key() -> KeyEvent {
         KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)
+    }
+    fn esc_key() -> KeyEvent {
+        KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)
+    }
+    fn ctrl_u_key() -> KeyEvent {
+        KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL)
+    }
+
+    #[test]
+    fn ctrl_u_clears_input_buffer() {
+        let mut app = App::test_default();
+        app.input.set_text("hello world");
+
+        let consumed = handle_editing_key(&mut app, ctrl_u_key());
+
+        assert!(consumed);
+        assert!(app.input.is_empty());
+    }
+
+    #[test]
+    fn ctrl_u_with_empty_input_is_noop_but_consumed() {
+        let mut app = App::test_default();
+        let consumed = handle_editing_key(&mut app, ctrl_u_key());
+        assert!(consumed);
+        assert!(app.input.is_empty());
+    }
+
+    #[test]
+    fn double_esc_within_window_clears_non_empty_input() {
+        let mut app = App::test_default();
+        app.input.set_text("draft");
+
+        assert!(handle_turn_control_key(&mut app, esc_key()));
+        assert_eq!(app.input.text(), "draft");
+        assert!(app.last_esc_at.is_some());
+
+        assert!(handle_turn_control_key(&mut app, esc_key()));
+        assert!(app.input.is_empty());
+        assert!(app.last_esc_at.is_none());
+    }
+
+    #[test]
+    fn single_esc_does_not_clear_input() {
+        let mut app = App::test_default();
+        app.input.set_text("draft");
+
+        assert!(handle_turn_control_key(&mut app, esc_key()));
+
+        assert_eq!(app.input.text(), "draft");
+        assert!(app.last_esc_at.is_some());
+    }
+
+    #[test]
+    fn non_esc_key_resets_double_esc_pairing() {
+        let mut app = App::test_default();
+        app.input.set_text("hi");
+
+        // First Esc primes the timestamp.
+        assert!(handle_turn_control_key(&mut app, esc_key()));
+        assert!(app.last_esc_at.is_some());
+
+        // Any non-Esc key routed through handle_normal_key_actions clears
+        // the pairing window so a fresh first Esc cannot pair with a stale
+        // earlier one. Use a printable char (always consumed).
+        let _ = handle_normal_key_actions(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE),
+        );
+        assert!(app.last_esc_at.is_none());
+
+        // The next Esc should NOT clear the input -- it's a fresh first Esc.
+        assert!(handle_turn_control_key(&mut app, esc_key()));
+        assert_eq!(app.input.text(), "hix");
+        assert!(app.last_esc_at.is_some());
     }
 
     #[test]

@@ -188,6 +188,7 @@ pub(super) fn supported_command_candidates(app: &App) -> Vec<SlashCandidate> {
     let mut by_name: BTreeMap<String, String> = BTreeMap::new();
     by_name.insert("/1m-context".into(), "Manage 1M context for this folder".into());
     by_name.insert("/cancel".into(), "Cancel active turn".into());
+    by_name.insert("/clear".into(), "Clear chat history in this session".into());
     by_name.insert("/compact".into(), "Compact session context".into());
     by_name.insert("/config".into(), "Open settings".into());
     by_name.insert("/docs".into(), "Show in-chat help topics".into());
@@ -439,6 +440,7 @@ pub fn is_supported_command(app: &App, command_name: &str) -> bool {
         command_name,
         "/1m-context"
             | "/cancel"
+            | "/clear"
             | "/compact"
             | "/config"
             | "/mcp"

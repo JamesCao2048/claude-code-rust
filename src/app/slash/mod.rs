@@ -1131,6 +1131,53 @@ mod tests {
     }
 
     #[test]
+    fn clear_command_drops_chat_history_and_emits_system_notice() {
+        let mut app = App::test_default();
+        app.push_message_tracked(ChatMessage::new(
+            MessageRole::User,
+            vec![MessageBlock::Text(TextBlock::from_complete("hi"))],
+            None,
+        ));
+        app.push_message_tracked(ChatMessage::new(
+            MessageRole::Assistant,
+            vec![MessageBlock::Text(TextBlock::from_complete("there"))],
+            None,
+        ));
+
+        let consumed = try_handle_submit(&mut app, "/clear");
+
+        assert!(consumed);
+        assert_eq!(app.messages.len(), 1, "only the trailing system notice should remain");
+        let last = app.messages.last().expect("system notice");
+        assert!(matches!(last.role, MessageRole::System(_)));
+        let Some(MessageBlock::Text(block)) = last.blocks.first() else {
+            panic!("expected text block");
+        };
+        assert_eq!(block.text, "Conversation cleared.");
+    }
+
+    #[test]
+    fn clear_command_with_extra_args_returns_usage() {
+        let mut app = App::test_default();
+        let consumed = try_handle_submit(&mut app, "/clear extra");
+        assert!(consumed);
+        let Some(MessageBlock::Text(block)) =
+            app.messages.last().and_then(|m| m.blocks.first())
+        else {
+            panic!("expected text block");
+        };
+        assert_eq!(block.text, "Usage: /clear");
+    }
+
+    #[test]
+    fn clear_command_appears_in_candidates() {
+        let app = App::test_default();
+        let names: Vec<String> =
+            supported_command_candidates(&app).into_iter().map(|c| c.primary).collect();
+        assert!(names.iter().any(|n| n == "/clear"), "missing /clear");
+    }
+
+    #[test]
     fn compact_with_args_returns_usage_message() {
         let mut app = App::test_default();
         app.messages.push(ChatMessage::new(
