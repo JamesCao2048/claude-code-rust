@@ -35,6 +35,7 @@ impl BridgeLauncher {
         } else {
             std::process::Stdio::null()
         });
+        cmd.kill_on_drop(true);
         cmd
     }
 }
@@ -341,6 +342,37 @@ mod tests {
         assert!(stdout.contains(&format!("script={}", fixture.script_path.display())));
         assert!(stdout.contains("diag=1"));
         assert!(stderr.contains("diagnostics-stderr"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn command_sets_kill_on_drop() {
+        let fixture = runtime_fixture().expect("runtime fixture");
+        let launcher = BridgeLauncher {
+            runtime_path: fixture.runtime_path,
+            script_path: fixture.script_path,
+        };
+        let mut cmd = launcher.command(false);
+        cmd.arg("--sleep-forever");
+        let child = cmd.spawn().expect("spawn");
+        let pid = child.id().expect("pid");
+        drop(child);
+
+        let start = std::time::Instant::now();
+        loop {
+            if start.elapsed() > std::time::Duration::from_secs(2) {
+                panic!("child {pid} not killed within 2s — kill_on_drop missing");
+            }
+            let alive = std::process::Command::new("kill")
+                .args(["-0", &pid.to_string()])
+                .status()
+                .expect("kill -0")
+                .success();
+            if !alive {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
     }
 
     #[test]
@@ -669,7 +701,7 @@ mod tests {
 
     #[cfg(not(windows))]
     fn test_runtime_contents() -> &'static str {
-        "#!/bin/sh\nprintf 'script=%s\\n' \"$1\"\nprintf 'diag=%s\\n' \"$CLAUDE_RS_BRIDGE_DIAGNOSTICS\"\nprintf 'diagnostics-stderr\\n' >&2\n"
+        "#!/bin/sh\nif [ \"$2\" = \"--sleep-forever\" ]; then exec sleep 600; fi\nprintf 'script=%s\\n' \"$1\"\nprintf 'diag=%s\\n' \"$CLAUDE_RS_BRIDGE_DIAGNOSTICS\"\nprintf 'diagnostics-stderr\\n' >&2\n"
     }
 
     #[cfg(unix)]
