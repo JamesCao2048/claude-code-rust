@@ -224,7 +224,11 @@ fn render_tool_content(tc: &ToolCallInfo, width: u16) -> Vec<Line<'static>> {
     let is_execute = tc.is_execute_tool();
     let mut lines: Vec<Line<'static>> = Vec::new();
 
-    // For Execute tool calls with terminal output, render the live output
+    // For Execute tool calls with terminal output, render the live output.
+    // Fall through to tc.content rendering when there is no terminal_output and
+    // the status is no longer InProgress — this handles the SDK Bash tool path
+    // where the result text comes back as a Content block (no terminal session)
+    // and would otherwise be invisible even after `ctrl+o` expansion.
     if is_execute {
         if let Some(ref output) = tc.terminal_output {
             let stripped_output = highlight::strip_ansi(output);
@@ -238,11 +242,16 @@ fn render_tool_content(tc: &ToolCallInfo, width: u16) -> Vec<Line<'static>> {
             } else {
                 lines.extend(highlight::render_terminal_output(output));
             }
+            debug_failed_tool_render(tc);
+            return lines;
         } else if matches!(tc.status, model::ToolCallStatus::InProgress) {
             lines.push(Line::from(Span::styled("running...", Style::default().fg(theme::DIM))));
+            debug_failed_tool_render(tc);
+            return lines;
         }
-        debug_failed_tool_render(tc);
-        return lines;
+        // No terminal_output and not InProgress → fall through to render
+        // tc.content (e.g. failed Bash whose stderr was returned as a Content
+        // block by the SDK).
     }
 
     for content in &tc.content {
