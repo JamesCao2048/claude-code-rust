@@ -376,6 +376,7 @@ mod tests {
             perf_append: false,
             permission_mode: None,
             dangerously_skip_permissions: false,
+            print: None,
         };
 
         let app = super::create_app(&cli);

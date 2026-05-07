@@ -555,6 +555,7 @@ mod tests {
             perf_append: false,
             permission_mode: None,
             dangerously_skip_permissions: false,
+            print: None,
         };
 
         let resolved = resolve_log_path(&cli).expect("resolve succeeds").expect("path exists");
@@ -579,6 +580,7 @@ mod tests {
             perf_append: false,
             permission_mode: None,
             dangerously_skip_permissions: false,
+            print: None,
         };
 
         let resolved = resolve_log_path(&cli).expect("resolve succeeds").expect("path exists");
@@ -604,6 +606,7 @@ mod tests {
             perf_append: false,
             permission_mode: None,
             dangerously_skip_permissions: false,
+            print: None,
         };
 
         let resolved = resolve_log_path(&cli).expect("resolve succeeds").expect("path exists");
@@ -627,6 +630,7 @@ mod tests {
             perf_append: false,
             permission_mode: None,
             dangerously_skip_permissions: false,
+            print: None,
         };
 
         let resolved = resolve_log_path(&cli).expect("resolve succeeds").expect("path exists");
@@ -650,6 +654,7 @@ mod tests {
             perf_append: false,
             permission_mode: None,
             dangerously_skip_permissions: false,
+            print: None,
         };
 
         let resolved = resolve_perf_path(&cli).expect("resolve succeeds").expect("path exists");

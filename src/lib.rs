@@ -171,6 +171,17 @@ pub struct Cli {
     /// Skip all permission prompts. Equivalent to `--permission-mode bypassPermissions`.
     #[arg(long, conflicts_with = "permission_mode")]
     pub dangerously_skip_permissions: bool,
+
+    /// Non-interactive print mode: emit a single prompt and exit. Mutually exclusive with subcommands.
+    ///
+    /// Note on enforcement: `conflicts_with = "command"` would be the natural choice, but
+    /// clap's debug assertion rejects it because the `command` field is the derived
+    /// subcommand container, not a regular argument or group. Mutual exclusion is
+    /// therefore handled manually below — clap parses `-p` and the subcommand
+    /// independently, then `resolve_command()` rejects the both-set combination.
+    /// `cli_dash_p_with_other_subcommand_is_rejected` exercises the manual path.
+    #[arg(short = 'p', long = "print", value_name = "PROMPT")]
+    pub print: Option<String>,
 }
 
 impl Cli {
@@ -183,15 +194,79 @@ impl Cli {
         }
         self.permission_mode
     }
+
+    /// Reduce the parsed CLI surface to a concrete `Command`, mapping the top-level
+    /// `-p/--print` flag onto `Command::Print(PrintArgs::default-ish)`.
+    ///
+    /// This is also where we enforce the `-p` ↔ subcommand mutual exclusion (see the
+    /// comment on `Cli::print` for why clap's `conflicts_with` cannot do it for us).
+    /// Returning `None` from this function is reserved for "no command at all", which
+    /// callers map to the default TUI behavior.
+    pub fn resolve_command(&self) -> anyhow::Result<Command> {
+        match (&self.command, &self.print) {
+            (Some(_), Some(_)) => anyhow::bail!(
+                "the argument '-p <PROMPT>' cannot be used with a subcommand"
+            ),
+            (Some(cmd), None) => Ok(cmd.clone()),
+            (None, Some(prompt)) => Ok(Command::Print(PrintArgs {
+                prompt: Some(prompt.clone()),
+                output_format: PrintOutputFormat::StreamJson,
+                max_turns: None,
+                timeout_secs: None,
+                idle_timeout_secs: 1800,
+                resume: None,
+                continue_session: false,
+                model: None,
+            })),
+            (None, None) => anyhow::bail!("no subcommand"),
+        }
+    }
 }
 
-#[derive(Subcommand, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, ValueEnum, PartialEq, Eq)]
+pub enum PrintOutputFormat {
+    #[value(name = "text")]
+    Text,
+    #[value(name = "stream-json", alias = "stream_json")]
+    StreamJson,
+}
+
+#[derive(clap::Args, Clone, Debug, PartialEq, Eq)]
+pub struct PrintArgs {
+    /// Prompt text. If omitted, read from stdin (TTY stdin → exit 64).
+    pub prompt: Option<String>,
+    /// Output format: `stream-json` (default, NDJSON) or `text` (human-readable).
+    #[arg(long, value_enum, default_value_t = PrintOutputFormat::StreamJson)]
+    pub output_format: PrintOutputFormat,
+    /// Maximum number of agent turns before forced termination.
+    #[arg(long)]
+    pub max_turns: Option<u32>,
+    /// Hard wall-clock timeout in seconds. Overrides `--idle-timeout-secs` when shorter.
+    #[arg(long)]
+    pub timeout_secs: Option<u64>,
+    /// Idle (no-event) timeout in seconds. Defaults to 1800.
+    #[arg(long, default_value_t = 1800)]
+    pub idle_timeout_secs: u64,
+    /// Resume a specific session by ID. Mutually exclusive with `--continue`.
+    #[arg(long, conflicts_with = "continue_session")]
+    pub resume: Option<String>,
+    /// Continue the most recent session in this directory. Mutually exclusive with `--resume`.
+    #[arg(long = "continue", conflicts_with = "resume")]
+    pub continue_session: bool,
+    /// Override the model used for this run.
+    #[arg(long)]
+    pub model: Option<String>,
+}
+
+#[derive(Subcommand, Clone, Debug, PartialEq, Eq)]
 pub enum Command {
     /// Resume a previous session by ID, or pick from recent sessions
     Resume {
         /// Session ID to resume directly. Omit to show a session picker.
         session_id: Option<String>,
     },
+    /// Non-interactive print mode: send a single prompt and stream events to stdout.
+    Print(PrintArgs),
 }
 
 #[cfg(test)]
@@ -220,5 +295,65 @@ mod tests {
     #[test]
     fn cli_rejects_legacy_resume_flag() {
         assert!(Cli::try_parse_from(["lingxi-ascendc", "--resume", "abc-123"]).is_err());
+    }
+
+    use super::PrintOutputFormat;
+
+    #[test]
+    fn cli_print_subcommand_with_positional_prompt() {
+        let cli = Cli::try_parse_from(["lingxi-ascendc", "print", "hello"]).expect("parse");
+        let cmd = cli.resolve_command().expect("resolve");
+        let Command::Print(args) = cmd else { panic!("expected Print, got {cmd:?}") };
+        assert_eq!(args.prompt.as_deref(), Some("hello"));
+        assert_eq!(args.output_format, PrintOutputFormat::StreamJson);
+        assert_eq!(args.idle_timeout_secs, 1800);
+        assert!(args.max_turns.is_none());
+        assert!(args.timeout_secs.is_none());
+    }
+
+    #[test]
+    fn cli_top_level_dash_p_is_alias_for_print() {
+        let cli = Cli::try_parse_from(["lingxi-ascendc", "-p", "hi"]).expect("parse");
+        let cmd = cli.resolve_command().expect("resolve");
+        let Command::Print(args) = cmd else { panic!("expected Print") };
+        assert_eq!(args.prompt.as_deref(), Some("hi"));
+    }
+
+    #[test]
+    fn cli_print_text_format_and_max_turns() {
+        let cli = Cli::try_parse_from([
+            "lingxi-ascendc", "print", "--output-format", "text",
+            "--max-turns", "5", "go",
+        ])
+        .expect("parse");
+        let Command::Print(args) = cli.resolve_command().expect("resolve") else { panic!() };
+        assert_eq!(args.output_format, PrintOutputFormat::Text);
+        assert_eq!(args.max_turns, Some(5));
+        assert_eq!(args.prompt.as_deref(), Some("go"));
+    }
+
+    #[test]
+    fn cli_print_resume_and_continue_are_mutually_exclusive() {
+        let err = Cli::try_parse_from([
+            "lingxi-ascendc", "print", "--resume", "abc", "--continue", "hi",
+        ])
+        .expect_err("clap should reject");
+        assert!(err.to_string().contains("cannot be used"), "actual: {err}");
+    }
+
+    #[test]
+    fn cli_dash_p_with_other_subcommand_is_rejected() {
+        // `conflicts_with = "command"` is not supported by clap for subcommand-derived
+        // fields, so parsing succeeds; the conflict is rejected manually inside
+        // `resolve_command`. Verify the manual path actually triggers.
+        let parsed = Cli::try_parse_from(["lingxi-ascendc", "-p", "hi", "resume"])
+            .expect("parsing succeeds; rejection happens in resolve_command");
+        let err = parsed.resolve_command().expect_err(
+            "-p with another subcommand must fail in resolve_command",
+        );
+        assert!(
+            err.to_string().contains("cannot be used"),
+            "actual: {err}"
+        );
     }
 }
