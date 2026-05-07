@@ -258,6 +258,7 @@ fn measure_message_height_at(
         width,
         app.viewport.layout_generation,
         app.tools_collapsed,
+        app.show_subagent_internals,
         !is_last_message,
     );
     app.sync_render_cache_message(idx);
@@ -275,6 +276,7 @@ fn measure_message_height_at(
 /// temporary and discarded after measurement. Block-level caches are still
 /// populated as a side effect (via `render_text_cached` / `render_tool_call_cached`),
 /// so completed blocks remain O(1) on subsequent calls.
+#[allow(clippy::too_many_arguments)]
 fn measure_message_height(
     msg: &mut crate::app::ChatMessage,
     spinner: &SpinnerState,
@@ -282,6 +284,7 @@ fn measure_message_height(
     width: u16,
     layout_generation: u64,
     tools_collapsed: bool,
+    show_subagent_internals: bool,
     include_trailing_separator: bool,
 ) -> (usize, usize) {
     let _t = crate::perf::start_with("chat::measure_msg", "blocks", msg.blocks.len());
@@ -293,6 +296,7 @@ fn measure_message_height(
             width,
             layout_generation,
             tools_collapsed,
+            show_subagent_internals,
             include_trailing_separator,
         );
     crate::perf::mark_with("chat::measure_msg_wrapped_lines", "lines", wrapped_lines);
@@ -662,6 +666,7 @@ fn render_culled_messages(
                     message::MessageRenderOptions {
                         tools_collapsed: app.tools_collapsed,
                         include_trailing_separator: i + 1 != msg_count,
+                        show_subagent_internals: app.show_subagent_internals,
                     },
                 ),
                 structural_skip,
@@ -683,6 +688,7 @@ fn render_culled_messages(
                     message::MessageRenderOptions {
                         tools_collapsed: app.tools_collapsed,
                         include_trailing_separator: i + 1 != msg_count,
+                        show_subagent_internals: app.show_subagent_internals,
                     },
                 ),
                 out,

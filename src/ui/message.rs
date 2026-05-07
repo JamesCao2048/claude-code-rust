@@ -169,7 +169,11 @@ pub(crate) fn render_message_with_tools_collapsed(
         None,
         width,
         0,
-        MessageRenderOptions { tools_collapsed, include_trailing_separator: true },
+        MessageRenderOptions {
+            tools_collapsed,
+            include_trailing_separator: true,
+            show_subagent_internals: false,
+        },
     );
     render_message_internal(msg, spinner, render_context, out);
 }
@@ -187,7 +191,11 @@ pub(crate) fn render_message_with_tools_collapsed_and_separator(
         None,
         width,
         0,
-        MessageRenderOptions { tools_collapsed, include_trailing_separator },
+        MessageRenderOptions {
+            tools_collapsed,
+            include_trailing_separator,
+            show_subagent_internals: false,
+        },
     );
     render_message_internal(msg, spinner, render_context, out);
 }
@@ -206,7 +214,11 @@ pub(crate) fn render_message_with_tools_collapsed_and_separator_and_layout_gener
         None,
         width,
         layout_generation,
-        MessageRenderOptions { tools_collapsed, include_trailing_separator },
+        MessageRenderOptions {
+            tools_collapsed,
+            include_trailing_separator,
+            show_subagent_internals: false,
+        },
     );
     render_message_with_tools_collapsed_and_separator_and_layout_generation_with_mode(
         msg,
@@ -455,7 +467,10 @@ fn append_assistant_tool_block(
     let has_unfocused_hidden_interaction = tc.hidden
         && (tc.pending_permission.as_ref().is_some_and(|permission| !permission.focused)
             || tc.pending_question.as_ref().is_some_and(|question| !question.focused));
-    if (render_context.options.tools_collapsed || has_unfocused_hidden_interaction)
+    // `show_subagent_internals` overrides the early-return so hidden subagent
+    // children render even in collapsed mode (Ctrl+O 3-state cycle).
+    if !render_context.options.show_subagent_internals
+        && (render_context.options.tools_collapsed || has_unfocused_hidden_interaction)
         && tc.hidden_unless_focused_interaction()
     {
         return;
@@ -591,10 +606,12 @@ pub fn measure_message_height_cached_with_tools_collapsed_and_separator(
         width,
         layout_generation,
         tools_collapsed,
+        false,
         include_trailing_separator,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn measure_message_height_cached_with_tools_collapsed_and_separator_and_mode(
     msg: &mut ChatMessage,
     spinner: &SpinnerState,
@@ -602,13 +619,18 @@ pub fn measure_message_height_cached_with_tools_collapsed_and_separator_and_mode
     width: u16,
     layout_generation: u64,
     tools_collapsed: bool,
+    show_subagent_internals: bool,
     include_trailing_separator: bool,
 ) -> (usize, usize) {
     let render_context = MessageRenderContext::new(
         current_mode_id,
         width,
         layout_generation,
-        MessageRenderOptions { tools_collapsed, include_trailing_separator },
+        MessageRenderOptions {
+            tools_collapsed,
+            include_trailing_separator,
+            show_subagent_internals,
+        },
     );
     let cache = get_or_build_message_render_cache(msg, spinner, render_context);
     (cache.height(), cache.wrapped_lines())
@@ -655,7 +677,11 @@ pub(crate) fn render_message_from_offset_with_tools_collapsed(
         spinner,
         width,
         layout_generation,
-        MessageRenderOptions { tools_collapsed, include_trailing_separator: true },
+        MessageRenderOptions {
+            tools_collapsed,
+            include_trailing_separator: true,
+            show_subagent_internals: false,
+        },
         skip_rows,
         out,
     )
@@ -770,6 +796,9 @@ fn render_cached_message(segments: &[CachedMessageSegment], out: &mut Vec<Line<'
 pub(crate) struct MessageRenderOptions {
     pub tools_collapsed: bool,
     pub include_trailing_separator: bool,
+    /// When true, hidden subagent child tool calls render even if `tools_collapsed`
+    /// would normally suppress them.
+    pub show_subagent_internals: bool,
 }
 
 fn get_or_build_message_render_cache<'a>(
@@ -798,6 +827,7 @@ fn build_message_render_cache_key(
         width: render_context.width,
         layout_generation: render_context.layout_generation,
         tools_collapsed: render_context.options.tools_collapsed,
+        show_subagent_internals: render_context.options.show_subagent_internals,
         include_trailing_separator: render_context.options.include_trailing_separator,
         render_signature: build_message_render_signature(
             msg,
@@ -1683,7 +1713,11 @@ mod tests {
     }
 
     fn default_options() -> MessageRenderOptions {
-        MessageRenderOptions { tools_collapsed: false, include_trailing_separator: true }
+        MessageRenderOptions {
+            tools_collapsed: false,
+            include_trailing_separator: true,
+            show_subagent_internals: false,
+        }
     }
 
     fn ground_truth_height(msg: &mut ChatMessage, spinner: &SpinnerState, width: u16) -> usize {
@@ -1949,7 +1983,11 @@ mod tests {
             &spinner,
             80,
             1,
-            MessageRenderOptions { tools_collapsed: false, include_trailing_separator: false },
+            MessageRenderOptions {
+                tools_collapsed: false,
+                include_trailing_separator: false,
+                show_subagent_internals: false,
+            },
             0,
             &mut out,
         );
@@ -1976,7 +2014,11 @@ mod tests {
             &spinner,
             80,
             1,
-            MessageRenderOptions { tools_collapsed: false, include_trailing_separator: false },
+            MessageRenderOptions {
+                tools_collapsed: false,
+                include_trailing_separator: false,
+                show_subagent_internals: false,
+            },
             0,
             &mut out,
         );

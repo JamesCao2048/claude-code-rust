@@ -196,6 +196,9 @@ pub struct App {
     /// Session-level preference for collapsing non-Execute tool call bodies.
     /// Toggled by Ctrl+O and applied at render/layout time.
     pub tools_collapsed: bool,
+    /// When true, hidden subagent child tool calls are forced to render even
+    /// in collapsed mode. Part of the Ctrl+O 3-state cycle.
+    pub show_subagent_internals: bool,
     /// IDs of root Task/Agent tool calls currently `InProgress`.
     /// Use `insert_active_task()`, `remove_active_task()`.
     pub active_task_ids: HashSet<String>,
@@ -876,6 +879,7 @@ impl App {
             spinner_last_advance_at: None,
             active_turn_assistant_message_idx: None,
             tools_collapsed: false,
+            show_subagent_internals: false,
             active_task_ids: HashSet::default(),
             tool_call_scopes: HashMap::default(),
             terminals: std::rc::Rc::default(),

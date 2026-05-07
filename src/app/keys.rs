@@ -1144,9 +1144,27 @@ fn handle_subagent_key(app: &mut App, key: KeyEvent) -> bool {
     }
 }
 
-/// Toggle the session-level collapsed preference for non-Execute tool calls.
+/// Cycle the session-level tool-call display state through three modes:
+///
+/// 1. `(tools_collapsed=true,  show_subagent_internals=false)` — most compact;
+///    subagent children hidden.
+/// 2. `(tools_collapsed=true,  show_subagent_internals=true)`  — compact bodies,
+///    subagent children visible (each compact too).
+/// 3. `(tools_collapsed=false, show_subagent_internals=false)` — fully expanded;
+///    subagent children render naturally.
+///
+/// Other combinations (e.g. after manual mutation) are treated as state 3 and
+/// fall back to state 1 on the next press.
 pub(super) fn toggle_all_tool_calls(app: &mut App) {
-    app.tools_collapsed = !app.tools_collapsed;
+    let next = match (app.tools_collapsed, app.show_subagent_internals) {
+        (true, false) => (true, true),
+        (true, true) => (false, false),
+        // Both `(false, false)` (the standard expanded state) and any
+        // unexpected combination cycle back to the most compact state.
+        _ => (true, false),
+    };
+    app.tools_collapsed = next.0;
+    app.show_subagent_internals = next.1;
     app.invalidate_layout(InvalidationLevel::Global);
 }
 
