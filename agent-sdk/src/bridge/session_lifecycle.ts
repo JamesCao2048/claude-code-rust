@@ -790,6 +790,12 @@ function initialSessionModel(launchSettings: SessionLaunchSettings): string {
   return model || OPUS_MODEL_ALIAS;
 }
 
+function maxTurnsFromLaunchSettings(launchSettings: SessionLaunchSettings): number | undefined {
+  const settings = settingsObjectFromLaunchSettings(launchSettings);
+  const v = settings?.maxTurns;
+  return typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.floor(v) : undefined;
+}
+
 function startupModelOption(
   launchSettings: SessionLaunchSettings,
 ): {
@@ -884,7 +890,7 @@ export function buildQueryOptions(params: QueryOptionsBuilderParams) {
   const settings = normalizedSettingsFromLaunchSettings(params.launchSettings);
   return {
     cwd: params.cwd,
-    maxTurns: 2000,
+    maxTurns: maxTurnsFromLaunchSettings(params.launchSettings) ?? 2000,
     includePartialMessages: true,
     promptSuggestions: true,
     executable: "node" as const,

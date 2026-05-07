@@ -2733,3 +2733,37 @@ test("attachRequestUserDialogInterceptor preserves non-dialog control requests",
   assert.equal(calls.length, 1);
   assert.equal(calls[0]?.request.subtype, "can_use_tool");
 });
+
+// @ts-expect-error vitest is provided by the test runner; not declared in devDependencies
+import { describe, it, expect } from "vitest";
+
+describe("buildQueryOptions maxTurns plumbing", () => {
+  function makeOptions(launchSettings: import("./types.js").SessionLaunchSettings) {
+    const input = new AsyncQueue<import("@anthropic-ai/claude-agent-sdk").SDKUserMessage>();
+    return buildQueryOptions({
+      cwd: "/tmp",
+      launchSettings,
+      provisionalSessionId: "s1",
+      input,
+      canUseTool: async () => ({ behavior: "deny", message: "not used" }),
+      enableSdkDebug: false,
+      enableSpawnDebug: false,
+      sessionIdForLogs: () => "s1",
+    });
+  }
+
+  it("uses launch_settings.settings.maxTurns when set", () => {
+    const opts = makeOptions({ settings: { maxTurns: 7 } });
+    expect(opts.maxTurns).toBe(7);
+  });
+
+  it("falls back to default 2000 when unset", () => {
+    const opts = makeOptions({});
+    expect(opts.maxTurns).toBe(2000);
+  });
+
+  it("rejects non-positive maxTurns", () => {
+    const opts = makeOptions({ settings: { maxTurns: -3 } });
+    expect(opts.maxTurns).toBe(2000);
+  });
+});
