@@ -286,3 +286,325 @@ mod tests {
         assert_eq!(newlines, 1);
     }
 }
+
+// ---------------------------------------------------------------------------
+// T6: `TextEmitter` — human-readable output for `--output-format text`.
+//
+// Routing rules (design §4.2, simplified for v1):
+// - Assistant text chunks (`SessionUpdate::AgentMessageChunk` with
+//   `ContentBlock::Text`) → stdout, written as-is (no trailing newline; the
+//   model emits its own newlines, and the final terminator from
+//   `result.success` ensures the line ends).
+// - Thinking chunks (`SessionUpdate::AgentThoughtChunk`) → suppressed by
+//   default (`show_thinking == false`). Plan defers `--show-thinking` to v1.5.
+// - Tool calls (`SessionUpdate::ToolCall`) → stderr line `● {tool}({short})`
+//   where `{tool}` is the tool kind and `{short}` is a one-line preview of
+//   `tool_call.title` (truncated to 60 chars).
+// - Tool call updates (`SessionUpdate::ToolCallUpdate`) → stderr line:
+//     `  ✓` for `status == "completed"`,
+//     `  ✗ {reason}` for `status == "failed"` (reason from raw_output or
+//     fields.title fallback). Other statuses are dropped.
+// - `result.success` (`TurnComplete{Completed|None}`) → stdout terminator
+//   newline, so callers piping to `read` always see a clean EOL.
+// - `result.error`-like events (`TurnError`, `ConnectionFailed`) → stderr
+//   `error: {msg}`.
+// - Warnings/errors via `emit_warning`/`emit_error` → stderr.
+//
+// No color: TTY/no-TTY decision lives in the caller. We just emit plain text.
+// ---------------------------------------------------------------------------
+
+pub struct TextEmitter<W1: Write, W2: Write> {
+    stdout: W1,
+    stderr: W2,
+    show_thinking: bool,
+}
+
+impl<W1: Write, W2: Write> TextEmitter<W1, W2> {
+    pub fn new(stdout: W1, stderr: W2) -> Self {
+        Self {
+            stdout,
+            stderr,
+            show_thinking: false,
+        }
+    }
+
+    /// Returns the short (≤60 char) one-line preview used in `● {tool}(...)`.
+    fn short_title(title: &str) -> String {
+        const MAX: usize = 60;
+        let single_line: String = title.lines().next().unwrap_or("").to_owned();
+        if single_line.chars().count() <= MAX {
+            single_line
+        } else {
+            let truncated: String = single_line.chars().take(MAX).collect();
+            format!("{truncated}…")
+        }
+    }
+
+    fn write_assistant_text(&mut self, text: &str) -> std::io::Result<()> {
+        self.stdout.write_all(text.as_bytes())?;
+        self.stdout.flush()
+    }
+
+    fn write_tool_call(
+        &mut self,
+        tool_call: &crate::agent::types::ToolCall,
+    ) -> std::io::Result<()> {
+        let kind = if tool_call.kind.is_empty() {
+            "tool"
+        } else {
+            tool_call.kind.as_str()
+        };
+        let short = Self::short_title(&tool_call.title);
+        writeln!(self.stderr, "● {kind}({short})")?;
+        self.stderr.flush()
+    }
+
+    fn write_tool_update(
+        &mut self,
+        update: &crate::agent::types::ToolCallUpdate,
+    ) -> std::io::Result<()> {
+        match update.fields.status.as_deref() {
+            Some("completed") => {
+                writeln!(self.stderr, "  ✓")?;
+                self.stderr.flush()
+            }
+            Some("failed") => {
+                let reason = update
+                    .fields
+                    .raw_output
+                    .as_deref()
+                    .or(update.fields.title.as_deref())
+                    .unwrap_or("failed")
+                    .lines()
+                    .next()
+                    .unwrap_or("failed");
+                writeln!(self.stderr, "  ✗ {reason}")?;
+                self.stderr.flush()
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+impl<W1: Write + Send, W2: Write + Send> Emitter for TextEmitter<W1, W2> {
+    fn emit_event(&mut self, ev: &BridgeEvent) -> std::io::Result<()> {
+        use crate::agent::types::{ContentBlock, SessionUpdate};
+        match ev {
+            BridgeEvent::SessionUpdate { update, .. } => match update {
+                SessionUpdate::AgentMessageChunk {
+                    content: ContentBlock::Text { text },
+                } => self.write_assistant_text(text),
+                SessionUpdate::AgentThoughtChunk { .. } => {
+                    // Reserved for v1.5 `--show-thinking`; default suppresses.
+                    // Both branches currently no-op; structure preserved so the
+                    // future `show_thinking == true` arm slots in cleanly.
+                    let _ = self.show_thinking;
+                    Ok(())
+                }
+                SessionUpdate::ToolCall { tool_call } => self.write_tool_call(tool_call),
+                SessionUpdate::ToolCallUpdate { tool_call_update } => {
+                    self.write_tool_update(tool_call_update)
+                }
+                _ => Ok(()),
+            },
+            BridgeEvent::TurnComplete {
+                terminal_reason, ..
+            } => match terminal_reason {
+                Some(TerminalReason::Completed) | None => {
+                    self.stdout.write_all(b"\n")?;
+                    self.stdout.flush()
+                }
+                Some(other) => {
+                    writeln!(self.stderr, "terminated: {}", other.as_stored())?;
+                    self.stderr.flush()
+                }
+            },
+            BridgeEvent::TurnError { message, .. } | BridgeEvent::ConnectionFailed { message } => {
+                writeln!(self.stderr, "error: {message}")?;
+                self.stderr.flush()
+            }
+            // Other events (system.init, system.session, etc.) are silent
+            // in text mode — they're plumbing, not user-visible content.
+            _ => Ok(()),
+        }
+    }
+
+    fn emit_warning(&mut self, msg: &str) -> std::io::Result<()> {
+        writeln!(self.stderr, "warning: {msg}")?;
+        self.stderr.flush()
+    }
+
+    fn emit_error(&mut self, msg: &str) -> std::io::Result<()> {
+        writeln!(self.stderr, "error: {msg}")?;
+        self.stderr.flush()
+    }
+
+    fn finish(&mut self) -> std::io::Result<()> {
+        self.stdout.flush()?;
+        self.stderr.flush()
+    }
+}
+
+#[cfg(test)]
+mod text_tests {
+    use super::*;
+    use crate::agent::types::{
+        ContentBlock, SessionUpdate, TerminalReason, ToolCall, ToolCallUpdate, ToolCallUpdateFields,
+    };
+
+    fn sample_tool_call(kind: &str, title: &str) -> ToolCall {
+        ToolCall {
+            tool_call_id: "tc1".into(),
+            title: title.into(),
+            kind: kind.into(),
+            status: "in_progress".into(),
+            content: Vec::new(),
+            raw_input: None,
+            raw_output: None,
+            output_metadata: None,
+            task_metadata: None,
+            locations: Vec::new(),
+            meta: None,
+        }
+    }
+
+    fn agent_message_event(text: &str) -> BridgeEvent {
+        BridgeEvent::SessionUpdate {
+            session_id: "s1".into(),
+            update: SessionUpdate::AgentMessageChunk {
+                content: ContentBlock::Text {
+                    text: text.to_owned(),
+                },
+            },
+        }
+    }
+
+    fn agent_thought_event(text: &str) -> BridgeEvent {
+        BridgeEvent::SessionUpdate {
+            session_id: "s1".into(),
+            update: SessionUpdate::AgentThoughtChunk {
+                content: ContentBlock::Text {
+                    text: text.to_owned(),
+                },
+            },
+        }
+    }
+
+    #[test]
+    fn text_assistant_chunk_writes_to_stdout_only() {
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        TextEmitter::new(&mut out, &mut err)
+            .emit_event(&agent_message_event("hi"))
+            .unwrap();
+        assert_eq!(std::str::from_utf8(&out).unwrap(), "hi");
+        assert!(err.is_empty(), "stderr unexpectedly populated: {err:?}");
+    }
+
+    #[test]
+    fn text_thinking_suppressed_by_default() {
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        TextEmitter::new(&mut out, &mut err)
+            .emit_event(&agent_thought_event("inner musing"))
+            .unwrap();
+        assert!(out.is_empty(), "stdout unexpectedly populated: {out:?}");
+        assert!(err.is_empty(), "stderr unexpectedly populated: {err:?}");
+    }
+
+    #[test]
+    fn text_tool_call_writes_marker_to_stderr() {
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        TextEmitter::new(&mut out, &mut err)
+            .emit_event(&BridgeEvent::SessionUpdate {
+                session_id: "s1".into(),
+                update: SessionUpdate::ToolCall {
+                    tool_call: sample_tool_call("BashTool", "ls -la /tmp"),
+                },
+            })
+            .unwrap();
+        assert!(out.is_empty());
+        let stderr_text = std::str::from_utf8(&err).unwrap();
+        assert_eq!(stderr_text, "● BashTool(ls -la /tmp)\n");
+    }
+
+    #[test]
+    fn text_tool_update_completed_writes_check_to_stderr() {
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let update = ToolCallUpdate {
+            tool_call_id: "tc1".into(),
+            fields: ToolCallUpdateFields {
+                status: Some("completed".into()),
+                ..Default::default()
+            },
+        };
+        TextEmitter::new(&mut out, &mut err)
+            .emit_event(&BridgeEvent::SessionUpdate {
+                session_id: "s1".into(),
+                update: SessionUpdate::ToolCallUpdate {
+                    tool_call_update: update,
+                },
+            })
+            .unwrap();
+        assert!(out.is_empty());
+        assert_eq!(std::str::from_utf8(&err).unwrap(), "  ✓\n");
+    }
+
+    #[test]
+    fn text_tool_update_failed_writes_cross_with_reason() {
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let update = ToolCallUpdate {
+            tool_call_id: "tc1".into(),
+            fields: ToolCallUpdateFields {
+                status: Some("failed".into()),
+                raw_output: Some("permission denied".into()),
+                ..Default::default()
+            },
+        };
+        TextEmitter::new(&mut out, &mut err)
+            .emit_event(&BridgeEvent::SessionUpdate {
+                session_id: "s1".into(),
+                update: SessionUpdate::ToolCallUpdate {
+                    tool_call_update: update,
+                },
+            })
+            .unwrap();
+        assert!(out.is_empty());
+        assert_eq!(std::str::from_utf8(&err).unwrap(), "  ✗ permission denied\n");
+    }
+
+    #[test]
+    fn text_result_success_writes_terminator_newline_to_stdout() {
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        TextEmitter::new(&mut out, &mut err)
+            .emit_event(&BridgeEvent::TurnComplete {
+                session_id: "s1".into(),
+                terminal_reason: Some(TerminalReason::Completed),
+            })
+            .unwrap();
+        assert_eq!(std::str::from_utf8(&out).unwrap(), "\n");
+        assert!(err.is_empty());
+    }
+
+    #[test]
+    fn text_turn_error_writes_error_prefix_to_stderr() {
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        TextEmitter::new(&mut out, &mut err)
+            .emit_event(&BridgeEvent::TurnError {
+                session_id: "s1".into(),
+                message: "boom".into(),
+                error_kind: None,
+                sdk_result_subtype: None,
+                assistant_error: None,
+                terminal_reason: None,
+            })
+            .unwrap();
+        assert!(out.is_empty());
+        assert_eq!(std::str::from_utf8(&err).unwrap(), "error: boom\n");
+    }
+}
