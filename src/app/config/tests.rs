@@ -189,7 +189,8 @@ fn space_persists_setting_toggles_to_the_expected_document() {
             SettingId::AlwaysThinking,
             ".claude/settings.json",
             vec!["alwaysThinkingEnabled"],
-            Value::Bool(true),
+            // Lingxi default is `true` when missing, so the first toggle persists `false`.
+            Value::Bool(false),
         ),
         (
             SettingId::TerminalProgressBar,
@@ -745,7 +746,12 @@ fn always_thinking_toggles_in_settings_document() {
 
     handle_key(&mut app, KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
 
-    assert_eq!(store::always_thinking_enabled(&app.config.committed_settings_document), Ok(true));
+    // Lingxi default for always_thinking is `true` when missing, so the first
+    // toggle persists `false`.
+    assert_eq!(
+        store::always_thinking_enabled(&app.config.committed_settings_document),
+        Ok(false)
+    );
 }
 
 #[test]

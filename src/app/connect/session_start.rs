@@ -308,7 +308,8 @@ mod tests {
         assert_setting_value(&launch_settings, "alwaysThinkingEnabled", &Value::Bool(false));
         assert_permission_mode(&launch_settings, "acceptEdits");
         assert_setting_value(&launch_settings, "fastMode", &Value::Bool(false));
-        assert_setting_value(&launch_settings, "effortLevel", &Value::String("medium".to_owned()));
+        // Lingxi default thinking effort is High when missing.
+        assert_setting_value(&launch_settings, "effortLevel", &Value::String("high".to_owned()));
         assert_setting_value(&launch_settings, "outputStyle", &Value::String("Default".to_owned()));
         assert_setting_value(&launch_settings, "spinnerTipsEnabled", &Value::Bool(true));
         assert_setting_value(&launch_settings, "terminalProgressBarEnabled", &Value::Bool(true));

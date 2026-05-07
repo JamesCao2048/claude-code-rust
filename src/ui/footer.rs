@@ -552,7 +552,8 @@ mod tests {
                 .authoritative(true),
         );
 
-        assert_eq!(footer_model_badge(&app), Some("Sonnet 4.7/Med".to_owned()));
+        // Lingxi default thinking effort is High when missing.
+        assert_eq!(footer_model_badge(&app), Some("Sonnet 4.7/High".to_owned()));
     }
 
     #[test]
