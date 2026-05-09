@@ -134,9 +134,17 @@ mod tests {
         assert!(root.join("PACKAGED_RESOURCES.txt").is_file());
         let manifest =
             std::fs::read_to_string(root.join("PACKAGED_RESOURCES.txt")).expect("read manifest");
-        for expected in
-            ["dir .claude", "dir archive_tasks", "dir evolution", "dir scripts", "dir utils"]
-        {
+        // M1-002: resources moved into runtime/ with `as <dest>` remapping;
+        // assert on the destination sides that appear in the packaged manifest.
+        for expected in [
+            "as .claude/skills",
+            "as .claude/agents",
+            "as .claude/commands",
+            "as archive_tasks",
+            "as evolution",
+            "as scripts",
+            "as utils",
+        ] {
             assert!(manifest.contains(expected), "manifest missing {expected}");
         }
     }
