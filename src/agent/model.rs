@@ -5,6 +5,36 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::PathBuf;
 
+/// Saturating conversion from `f64` to `u64`.
+///
+/// - NaN, negative, or non-finite inputs map to `0`.
+/// - Inputs `>= u64::MAX as f64` saturate at `u64::MAX`.
+/// - Otherwise rounds half-away-from-zero before casting.
+///
+/// Centralising this lets call sites express intent ("clamp + round") instead
+/// of relying on the `.max(0.0).round() as u64` idiom that triggers
+/// `clippy::cast_possible_truncation` and `clippy::cast_sign_loss`.
+#[inline]
+pub(crate) fn f64_to_u64_saturating(x: f64) -> u64 {
+    // 2^64 — the smallest f64 strictly greater than u64::MAX. Any finite x at
+    // or above this bound is unrepresentable in u64 and must saturate.
+    // `+INFINITY` also satisfies `x >= U64_BOUND`, so it correctly saturates.
+    const U64_BOUND: f64 = 18_446_744_073_709_551_616.0;
+    if x.is_nan() || x <= 0.0 {
+        // NaN, negatives, and -INFINITY all collapse to 0.
+        0
+    } else if x >= U64_BOUND {
+        // Finite-too-large or +INFINITY → saturate.
+        u64::MAX
+    } else {
+        // SAFETY: in (0, 2^64) and finite (NaN excluded above); round()
+        // preserves finiteness, so the cast is in-range.
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let v = x.round() as u64;
+        v
+    }
+}
+
 fn deserialize_u64_from_number<'de, D>(deserializer: D) -> Result<u64, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -19,7 +49,7 @@ where
                 if !f.is_finite() || f < 0.0 {
                     Err(D::Error::custom(format!("expected non-negative finite number, got {f}")))
                 } else {
-                    Ok(f.round() as u64)
+                    Ok(f64_to_u64_saturating(f))
                 }
             } else {
                 Err(D::Error::custom(format!("expected number, got {n}")))
@@ -1266,5 +1296,23 @@ impl RequestQuestionRequest {
         total_questions: usize,
     ) -> Self {
         Self { session_id: session_id.into(), tool_call, prompt, question_index, total_questions }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::f64_to_u64_saturating;
+
+    #[test]
+    fn f64_to_u64_saturating_handles_edge_cases() {
+        assert_eq!(f64_to_u64_saturating(0.0), 0);
+        assert_eq!(f64_to_u64_saturating(-1.0), 0);
+        assert_eq!(f64_to_u64_saturating(f64::NAN), 0);
+        assert_eq!(f64_to_u64_saturating(f64::NEG_INFINITY), 0);
+        assert_eq!(f64_to_u64_saturating(f64::INFINITY), u64::MAX);
+        assert_eq!(f64_to_u64_saturating(1.5), 2);
+        assert_eq!(f64_to_u64_saturating(1.4), 1);
+        assert_eq!(f64_to_u64_saturating(505.425_129_378_364_5), 505);
+        assert_eq!(f64_to_u64_saturating(1e30), u64::MAX);
     }
 }

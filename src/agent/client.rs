@@ -265,18 +265,17 @@ impl BridgeWriter {
         grace: std::time::Duration,
     ) -> anyhow::Result<std::process::ExitStatus> {
         let _ = self.shutdown().await;
-        match tokio::time::timeout(grace, self.child.wait()).await {
-            Ok(result) => result.context("graceful wait failed"),
-            Err(_) => {
-                tracing::warn!(
-                    target: crate::logging::targets::BRIDGE_LIFECYCLE,
-                    event_name = "bridge_shutdown_force_kill",
-                    message = "shutdown grace expired, sending SIGKILL",
-                    grace_secs = grace.as_secs(),
-                );
-                self.child.start_kill().context("start_kill failed")?;
-                self.child.wait().await.context("post-kill wait failed")
-            }
+        if let Ok(result) = tokio::time::timeout(grace, self.child.wait()).await {
+            result.context("graceful wait failed")
+        } else {
+            tracing::warn!(
+                target: crate::logging::targets::BRIDGE_LIFECYCLE,
+                event_name = "bridge_shutdown_force_kill",
+                message = "shutdown grace expired, sending SIGKILL",
+                grace_secs = grace.as_secs(),
+            );
+            self.child.start_kill().context("start_kill failed")?;
+            self.child.wait().await.context("post-kill wait failed")
         }
     }
 }

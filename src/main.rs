@@ -105,7 +105,7 @@ fn run() -> anyhow::Result<i32> {
     if cli.print.is_some() || matches!(cli.command, Some(Command::Print(_))) {
         let print_args = match cli.resolve_command()? {
             Command::Print(args) => args,
-            other => unreachable!("expected Print, got {other:?}"),
+            other @ Command::Resume { .. } => unreachable!("expected Print, got {other:?}"),
         };
         let cli_perm = cli.permission_mode;
         let cli_skip = cli.dangerously_skip_permissions;

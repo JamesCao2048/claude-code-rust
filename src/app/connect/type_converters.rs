@@ -232,7 +232,7 @@ pub(super) fn map_session_update(update: types::SessionUpdate) -> Option<model::
         } => Some(model::SessionUpdate::ApiRetryUpdate {
             attempt,
             max_retries,
-            retry_delay_ms: retry_delay_ms.max(0.0).round() as u64,
+            retry_delay_ms: model::f64_to_u64_saturating(retry_delay_ms),
             error_status,
             error: map_api_retry_error(error),
         }),

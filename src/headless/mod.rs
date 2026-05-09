@@ -11,6 +11,7 @@ pub mod watchdog;
 
 use crate::agent::client::{BridgeClient, BridgeReader, BridgeWriter};
 use crate::agent::wire::{BridgeCommand, BridgeEvent, CommandEnvelope, SessionLaunchSettings};
+use std::collections::BTreeMap;
 use crate::headless::driver::{
     HeadlessExit, PromptSource, ResolvedPermissionMode, classify_prompt, connect_phase,
     init_phase, resolve_permission_mode, shutdown_phase, streaming_phase,
@@ -149,7 +150,7 @@ async fn run_session(
             request_id: None,
             command: BridgeCommand::Initialize {
                 cwd: cwd_str.clone(),
-                metadata: Default::default(),
+                metadata: BTreeMap::default(),
             },
         })
         .await
@@ -173,7 +174,7 @@ async fn run_session(
                 cwd: cwd_str.clone(),
                 resume: args.resume.clone(),
                 launch_settings: launch_settings.clone(),
-                metadata: Default::default(),
+                metadata: BTreeMap::default(),
             },
         })
         .await

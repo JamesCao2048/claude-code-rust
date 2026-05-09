@@ -53,10 +53,8 @@ impl Watchdog {
     pub async fn tick(&mut self) -> WatchdogTick {
         tokio::time::sleep_until(self.next_deadline()).await;
         let now = Instant::now();
-        if let Some(h) = self.hard_deadline {
-            if now >= h {
-                return WatchdogTick::HardExpired;
-            }
+        if self.hard_deadline.is_some_and(|h| now >= h) {
+            return WatchdogTick::HardExpired;
         }
         if now >= self.last_activity + self.idle_window {
             return WatchdogTick::IdleExpired;
