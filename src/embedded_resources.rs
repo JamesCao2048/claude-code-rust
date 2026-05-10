@@ -118,7 +118,10 @@ mod tests {
         let resources = EmbeddedResourceDir::extract().expect("extract embedded resources");
         let root = resources.path();
 
-        assert!(root.join(".claude").join("commands").join("gen.md").is_file());
+        // sdk-v1 (T2) removed the legacy /lingxi-ascendc:gen* slash commands.
+        // The remaining packaged top-level command is `next.md`; assert on it
+        // to keep this gate honest after the resource swap.
+        assert!(root.join(".claude").join("commands").join("next.md").is_file());
         assert!(root.join(".claude").join("agents").is_dir());
         assert!(root.join(".claude").join("skills").is_dir());
         assert!(root.join("CLAUDE.md").is_file());
@@ -128,14 +131,15 @@ mod tests {
 
         let plugin_manifest = root.join(".claude-plugin").join("plugin.json");
         assert!(plugin_manifest.is_file());
-        assert!(root.join("commands").join("gen.md").is_file());
+        assert!(root.join("commands").join("next.md").is_file());
         assert!(root.join("agents").is_dir());
         assert!(root.join("skills").is_dir());
         assert!(root.join("PACKAGED_RESOURCES.txt").is_file());
         let manifest =
             std::fs::read_to_string(root.join("PACKAGED_RESOURCES.txt")).expect("read manifest");
-        // M1-002: resources moved into runtime/ with `as <dest>` remapping;
-        // assert on the destination sides that appear in the packaged manifest.
+        // M1-002 + sdk-v1 T8: resources are remapped via `as <dest>`. Assert on
+        // the destination sides that appear in the packaged manifest, including
+        // the new `templates` entry shipped with add_fp16.
         for expected in [
             "as .claude/skills",
             "as .claude/agents",
@@ -144,6 +148,7 @@ mod tests {
             "as evolution",
             "as scripts",
             "as utils",
+            "as templates",
         ] {
             assert!(manifest.contains(expected), "manifest missing {expected}");
         }
