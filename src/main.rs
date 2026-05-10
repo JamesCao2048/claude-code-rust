@@ -22,12 +22,12 @@ fn main() {
     }
 }
 
-fn run_cli_mode(subcmd: String, rest: Vec<String>, resource_dir: &std::path::Path) -> anyhow::Result<i32> {
+fn run_cli_mode(subcmd: &str, rest: &[String], resource_dir: &std::path::Path) -> anyhow::Result<i32> {
     let mut cmd = std::process::Command::new("python3");
     cmd.arg("-m")
         .arg("engine.cli")
-        .arg(&subcmd)
-        .args(&rest)
+        .arg(subcmd)
+        .args(rest)
         .env("PYTHONPATH", resource_dir)
         .env("LINGXI_RESOURCE_DIR", resource_dir)
         .stdout(std::process::Stdio::inherit())
@@ -40,6 +40,7 @@ fn run_cli_mode(subcmd: String, rest: Vec<String>, resource_dir: &std::path::Pat
     Ok(status.code().unwrap_or(1))
 }
 
+#[allow(clippy::too_many_lines)]
 fn run() -> anyhow::Result<i32> {
     // Check for reserved subcommands before clap parse so they bypass the TUI.
     let raw_args: Vec<String> = std::env::args().skip(1).collect();
@@ -48,7 +49,7 @@ fn run() -> anyhow::Result<i32> {
             lingxi_ascendc::embedded_resources::EmbeddedResourceDir::cleanup_orphans();
             let resource_dir = lingxi_ascendc::embedded_resources::EmbeddedResourceDir::extract()
                 .map_err(|e| anyhow::anyhow!("failed to extract embedded resources: {e}"))?;
-            return run_cli_mode(subcmd, rest, resource_dir.path());
+            return run_cli_mode(&subcmd, &rest, resource_dir.path());
         }
         lingxi_ascendc::cli_dispatch::Action::TuiMode(_) => {}
     }

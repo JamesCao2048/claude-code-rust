@@ -13,7 +13,7 @@ pub enum Action {
 pub fn dispatch(args: &[String]) -> Action {
     match args.first().map(String::as_str) {
         Some(s) if RESERVED_SUBCOMMANDS.contains(&s) => {
-            Action::CliMode(s.to_string(), args[1..].to_vec())
+            Action::CliMode(s.to_owned(), args[1..].to_vec())
         }
         _ => Action::TuiMode(args.to_vec()),
     }
