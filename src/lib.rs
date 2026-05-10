@@ -3,6 +3,7 @@
 
 pub mod agent;
 pub mod app;
+pub mod cli_dispatch;
 pub mod embedded_resources;
 pub mod error;
 pub mod headless;
