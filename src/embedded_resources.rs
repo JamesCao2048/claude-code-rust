@@ -118,10 +118,10 @@ mod tests {
         let resources = EmbeddedResourceDir::extract().expect("extract embedded resources");
         let root = resources.path();
 
-        // sdk-v1 (T2) removed the legacy /lingxi-ascendc:gen* slash commands.
-        // The remaining packaged top-level command is `next.md`; assert on it
-        // to keep this gate honest after the resource swap.
-        assert!(root.join(".claude").join("commands").join("next.md").is_file());
+        // sdk-v1 ships no top-level slash commands; workflows are driven from
+        // the runner CLI. Just assert the dirs exist as the resource swap
+        // target.
+        assert!(root.join(".claude").join("commands").is_dir());
         assert!(root.join(".claude").join("agents").is_dir());
         assert!(root.join(".claude").join("skills").is_dir());
         assert!(root.join("CLAUDE.md").is_file());
@@ -131,21 +131,17 @@ mod tests {
 
         let plugin_manifest = root.join(".claude-plugin").join("plugin.json");
         assert!(plugin_manifest.is_file());
-        assert!(root.join("commands").join("next.md").is_file());
+        assert!(root.join("commands").is_dir());
         assert!(root.join("agents").is_dir());
         assert!(root.join("skills").is_dir());
         assert!(root.join("PACKAGED_RESOURCES.txt").is_file());
         let manifest =
             std::fs::read_to_string(root.join("PACKAGED_RESOURCES.txt")).expect("read manifest");
-        // M1-002 + sdk-v1 T8: resources are remapped via `as <dest>`. Assert on
-        // the destination sides that appear in the packaged manifest, including
-        // the new `templates` entry shipped with add_fp16.
         for expected in [
             "as .claude/skills",
             "as .claude/agents",
             "as .claude/commands",
             "as archive_tasks",
-            "as evolution",
             "as scripts",
             "as utils",
             "as templates",
@@ -160,14 +156,12 @@ mod tests {
         let root = resources.path();
 
         assert!(root.join("archive_tasks").join("rms_norm").join("model.py").is_file());
-        assert!(root.join("evolution").join("meta_prompts").join("strategy_index.md").is_file());
-        assert!(root.join("evolution").join("world_model").join("wm_ops.py").is_file());
         assert!(root.join("scripts").join("lingxi").join("__init__.py").is_file());
         assert!(root.join("scripts").join("lingxi").join("state.py").is_file());
         assert!(root.join("scripts").join("lingxi").join("intake.py").is_file());
         assert!(root.join("scripts").join("lingxi").join("cli.py").is_file());
-        assert!(root.join("utils").join("opgen").join("verification_ascendc.py").is_file());
-        assert!(root.join("utils").join("zsearch").join("verification_tilelang.py").is_file());
+        assert!(root.join("utils").join("verification_ascendc.py").is_file());
+        assert!(root.join("utils").join("verification_tilelang.py").is_file());
     }
 
     #[test]
@@ -176,23 +170,11 @@ mod tests {
         let root = resources.path();
 
         for relative_path in [
-            "evolution/meta_prompts/strategy_index.md",
-            "evolution/meta_prompts/strategy_compatibility.md",
-            "evolution/meta_prompts/strategies/perf_01_double_buffer.md",
-            "evolution/knowledge_base/hardware/guide.md",
-            "evolution/knowledge_base/optimization_patterns/guide.md",
-            "evolution/world_model/operations.md",
-            "evolution/world_model/schema.md",
-            "evolution/world_model/wm_ops.py",
-            "evolution/world_model/check_round_artifacts.py",
             "archive_tasks/rms_norm/model.py",
             "archive_tasks/matmul_leakyrelu/model.py",
-            "utils/opgen/build_ascendc.py",
-            "utils/opgen/verification_ascendc.py",
-            "utils/opgen/verification_tilelang.py",
-            "utils/zsearch/build_ascendc.py",
-            "utils/zsearch/verification_ascendc.py",
-            "utils/zsearch/verification_tilelang.py",
+            "utils/build_ascendc.py",
+            "utils/verification_ascendc.py",
+            "utils/verification_tilelang.py",
         ] {
             assert!(root.join(relative_path).is_file(), "missing packaged path: {relative_path}");
         }
