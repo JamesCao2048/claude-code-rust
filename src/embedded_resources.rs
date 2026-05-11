@@ -118,9 +118,11 @@ mod tests {
         let resources = EmbeddedResourceDir::extract().expect("extract embedded resources");
         let root = resources.path();
 
-        // sdk-v1 ships no top-level slash commands; workflows are driven from
-        // the runner CLI. Just assert the dirs exist as the resource swap
-        // target.
+        // sdk-v1 ships a small set of TUI slash commands (gen-tilelang,
+        // gen-ascendc, verify-env) that thin-wrap the CLI subcommands; the
+        // canonical entrypoint for batch / CI is still `lingxi-ascendc run`
+        // routed via the RESERVED_SUBCOMMANDS dispatcher. The assertion here
+        // only checks the resource swap layout (dirs present after extract).
         assert!(root.join(".claude").join("commands").is_dir());
         assert!(root.join(".claude").join("agents").is_dir());
         assert!(root.join(".claude").join("skills").is_dir());
