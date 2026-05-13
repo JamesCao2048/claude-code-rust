@@ -22,13 +22,46 @@ fn main() {
     }
 }
 
+/// Locate the install-alongside Python dependency dir.
+///
+/// `make install` does `pip install --target $LIBDIR/python_deps -r runtime/requirements.txt`,
+/// landing the deps next to the installed binary. The shipped binary lives at
+/// `$LIBDIR/lingxi-ascendc` and is symlinked from `$BINDIR/lingxi-ascendc`.
+///
+/// On macOS (and Windows) `current_exe()` does **not** follow the symlink — it
+/// returns the path the user invoked (`$BINDIR/lingxi-ascendc`). We therefore
+/// canonicalize the path so `parent()` lands on the real `$LIBDIR/` next to
+/// the binary, not on `$BINDIR/`. Returns `None` for dev runs where no
+/// sibling `python_deps/` exists.
+fn python_deps_dir() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let resolved = std::fs::canonicalize(&exe).unwrap_or(exe);
+    let dir = resolved.parent()?.join("python_deps");
+    if dir.is_dir() { Some(dir) } else { None }
+}
+
 fn run_cli_mode(subcmd: &str, rest: &[String], resource_dir: &std::path::Path) -> anyhow::Result<i32> {
+    // Compose PYTHONPATH: extracted resources (engine/ lives here) plus the
+    // install-alongside python_deps dir if present.
+    let sep = if cfg!(windows) { ";" } else { ":" };
+    let mut pythonpath = resource_dir.as_os_str().to_owned();
+    if let Some(deps) = python_deps_dir() {
+        pythonpath.push(sep);
+        pythonpath.push(deps.as_os_str());
+    }
+    if let Some(existing) = std::env::var_os("PYTHONPATH") {
+        if !existing.is_empty() {
+            pythonpath.push(sep);
+            pythonpath.push(existing);
+        }
+    }
+
     let mut cmd = std::process::Command::new("python3");
     cmd.arg("-m")
         .arg("engine.cli")
         .arg(subcmd)
         .args(rest)
-        .env("PYTHONPATH", resource_dir)
+        .env("PYTHONPATH", &pythonpath)
         .env("LINGXI_RESOURCE_DIR", resource_dir)
         .stdout(std::process::Stdio::inherit())
         .stderr(std::process::Stdio::inherit());
