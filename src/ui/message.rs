@@ -1117,33 +1117,38 @@ fn welcome_lines(block: &WelcomeBlock, _width: u16) -> Vec<Line<'static>> {
         format!("{pad}Commands:"),
         Style::default().fg(theme::RUST_ORANGE).add_modifier(Modifier::BOLD),
     )));
-    lines.push(Line::from(Span::styled(
-        format!("{pad}  /lingxi-ascendc:next [switch <op>]   全场景算子开发下一步建议器"),
-        Style::default().fg(theme::DIM),
-    )));
-    lines.push(Line::from(Span::styled(
-        format!("{pad}                                       读取当前算子开发状态，推荐下一步，不执行 agent"),
-        Style::default().fg(theme::DIM),
-    )));
-    lines.push(Line::from(Span::styled(
-        format!("{pad}  /lingxi-ascendc:gen <op> <out>       从零生成 AscendC 算子"),
-        Style::default().fg(theme::DIM),
-    )));
-    lines.push(Line::from(Span::styled(
-        format!("{pad}  /lingxi-ascendc:gen-evo <op> <out>   进化式生成（并行+世界模型）"),
-        Style::default().fg(theme::DIM),
-    )));
-    lines.push(Line::from(Span::styled(
-        format!("{pad}  /lingxi-ascendc:optimize <repo> <op> ops 仓库算子性能优化"),
-        Style::default().fg(theme::DIM),
-    )));
-    lines.push(Line::from(Span::styled(
-        format!("{pad}  /lingxi-ascendc:debug <task_dir>     AscendC 算子调试与精度修复"),
-        Style::default().fg(theme::DIM),
-    )));
+    append_embedded_command_lines(&mut lines, pad);
     lines.push(Line::default());
 
     lines
+}
+
+/// Render the slash-command listing in the welcome banner from the binary's
+/// embedded `.claude/commands/*.md` frontmatter, so the welcome screen stays
+/// in lockstep with the actual packaged workflows.
+fn append_embedded_command_lines(lines: &mut Vec<Line<'static>>, pad: &str) {
+    let commands = crate::embedded_resources::list_embedded_commands();
+    if commands.is_empty() {
+        lines.push(Line::from(Span::styled(
+            format!("{pad}  输入 /lingxi-ascendc: 查看可用 workflow 命令"),
+            Style::default().fg(theme::DIM),
+        )));
+        return;
+    }
+    for cmd in &commands {
+        let header = if cmd.argument_hint.is_empty() {
+            format!("{pad}  /lingxi-ascendc:{}", cmd.name)
+        } else {
+            format!("{pad}  /lingxi-ascendc:{} {}", cmd.name, cmd.argument_hint)
+        };
+        lines.push(Line::from(Span::styled(header, Style::default().fg(theme::DIM))));
+        if !cmd.description.is_empty() {
+            lines.push(Line::from(Span::styled(
+                format!("{pad}      {}", cmd.description),
+                Style::default().fg(theme::DIM),
+            )));
+        }
+    }
 }
 
 fn selected_welcome_tip(block: &WelcomeBlock) -> &'static str {

@@ -77,6 +77,64 @@ impl Drop for EmbeddedResourceDir {
     }
 }
 
+/// Metadata for a slash command packaged inside the binary via `include_dir!`.
+///
+/// `name` is the file stem (e.g. `gen-tilelang`); TUI surfaces prepend the
+/// `lingxi-ascendc:` plugin prefix when displaying it to the user.
+#[derive(Debug, Clone)]
+pub struct EmbeddedCommand {
+    pub name: String,
+    pub description: String,
+    pub argument_hint: String,
+}
+
+/// Enumerate the `.claude/commands/*.md` files baked into the binary and
+/// return their frontmatter, sorted by command name.
+#[must_use]
+pub fn list_embedded_commands() -> Vec<EmbeddedCommand> {
+    let Some(commands_dir) = EMBEDDED_RESOURCES_DIR.get_dir(".claude/commands") else {
+        return Vec::new();
+    };
+    let mut commands = Vec::new();
+    for file in commands_dir.files() {
+        if file.path().extension().is_none_or(|ext| ext != "md") {
+            continue;
+        }
+        let Some(stem) = file.path().file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        let Some(content) = file.contents_utf8() else { continue };
+        let (description, argument_hint) = parse_command_frontmatter(content);
+        commands.push(EmbeddedCommand {
+            name: stem.to_owned(),
+            description,
+            argument_hint,
+        });
+    }
+    commands.sort_by(|a, b| a.name.cmp(&b.name));
+    commands
+}
+
+fn parse_command_frontmatter(content: &str) -> (String, String) {
+    let mut iter = content.lines();
+    if iter.next().map(str::trim) != Some("---") {
+        return (String::new(), String::new());
+    }
+    let mut description = String::new();
+    let mut argument_hint = String::new();
+    for line in iter {
+        if line.trim() == "---" {
+            break;
+        }
+        if let Some(rest) = line.strip_prefix("description:") {
+            rest.trim().clone_into(&mut description);
+        } else if let Some(rest) = line.strip_prefix("argument-hint:") {
+            rest.trim().clone_into(&mut argument_hint);
+        }
+    }
+    (description, argument_hint)
+}
+
 fn extract_dir(dir: &Dir<'_>, target: &Path) -> io::Result<()> {
     fs::create_dir_all(target)?;
     for file in dir.files() {
@@ -111,7 +169,46 @@ fn extract_plugin_layout(base: &Path) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::EmbeddedResourceDir;
+    use super::{EmbeddedResourceDir, list_embedded_commands, parse_command_frontmatter};
+
+    #[test]
+    fn list_embedded_commands_returns_packaged_slash_commands() {
+        let commands = list_embedded_commands();
+        let names: Vec<&str> = commands.iter().map(|c| c.name.as_str()).collect();
+        assert!(names.contains(&"gen-tilelang"), "missing gen-tilelang: {names:?}");
+        assert!(names.contains(&"gen-ascendc"), "missing gen-ascendc: {names:?}");
+        assert!(names.contains(&"verify-env"), "missing verify-env: {names:?}");
+        // Sorted output keeps the welcome banner stable across rebuilds.
+        let mut sorted = names.clone();
+        sorted.sort_unstable();
+        assert_eq!(names, sorted);
+        let gen_til = commands.iter().find(|c| c.name == "gen-tilelang").unwrap();
+        assert!(!gen_til.description.is_empty(), "description missing for gen-tilelang");
+        assert!(!gen_til.argument_hint.is_empty(), "argument-hint missing for gen-tilelang");
+    }
+
+    #[test]
+    fn parse_command_frontmatter_extracts_description_and_argument_hint() {
+        let body = "---\ndescription: do something\nargument-hint: <arg>\n---\n\nbody";
+        let (desc, hint) = parse_command_frontmatter(body);
+        assert_eq!(desc, "do something");
+        assert_eq!(hint, "<arg>");
+    }
+
+    #[test]
+    fn parse_command_frontmatter_handles_missing_frontmatter() {
+        let (desc, hint) = parse_command_frontmatter("# just markdown");
+        assert!(desc.is_empty());
+        assert!(hint.is_empty());
+    }
+
+    #[test]
+    fn parse_command_frontmatter_handles_missing_argument_hint() {
+        let body = "---\ndescription: only desc\n---\n";
+        let (desc, hint) = parse_command_frontmatter(body);
+        assert_eq!(desc, "only desc");
+        assert!(hint.is_empty());
+    }
 
     #[test]
     fn extract_creates_local_plugin_layout_for_embedded_claude_resources() {
