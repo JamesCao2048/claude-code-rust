@@ -22,6 +22,25 @@ fn verify_env_subcommand_routes_to_cli_mode() {
 }
 
 #[test]
+fn skill_subcommand_routes_to_cli_mode() {
+    let args = vec![
+        "skill".to_string(),
+        "ascendc-verify".to_string(),
+        "--workspace".to_string(),
+        ".".to_string(),
+        "--action-id".to_string(),
+        "agent-simple-attempt0".to_string(),
+    ];
+    match dispatch(&args) {
+        Action::CliMode(sub, rest) => {
+            assert_eq!(sub, "skill");
+            assert_eq!(rest[0], "ascendc-verify");
+        }
+        _ => panic!("expected CliMode"),
+    }
+}
+
+#[test]
 fn unknown_subcommand_falls_to_tui() {
     let args = vec!["--continue".to_string(), "msg".to_string()];
     match dispatch(&args) {
