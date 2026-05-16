@@ -41,6 +41,27 @@ fn skill_subcommand_routes_to_cli_mode() {
 }
 
 #[test]
+fn batch_subcommand_routes_to_cli_mode() {
+    let args = vec![
+        "batch".to_string(),
+        "--workflow".to_string(),
+        "generate_ascendc_via_tilelang".to_string(),
+        "--select".to_string(),
+        "L1/1-3".to_string(),
+    ];
+    match dispatch(&args) {
+        Action::CliMode(sub, rest) => {
+            assert_eq!(sub, "batch");
+            assert_eq!(
+                rest,
+                vec!["--workflow", "generate_ascendc_via_tilelang", "--select", "L1/1-3"]
+            );
+        }
+        _ => panic!("expected CliMode"),
+    }
+}
+
+#[test]
 fn unknown_subcommand_falls_to_tui() {
     let args = vec!["--continue".to_string(), "msg".to_string()];
     match dispatch(&args) {
