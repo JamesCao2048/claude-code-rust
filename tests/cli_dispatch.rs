@@ -41,6 +41,29 @@ fn skill_subcommand_routes_to_cli_mode() {
 }
 
 #[test]
+fn verify_runner_subcommand_routes_to_cli_mode() {
+    let args = vec![
+        "verify-runner".to_string(),
+        "--target".to_string(),
+        "tilelang".to_string(),
+        "--workspace".to_string(),
+        ".".to_string(),
+        "--action-id".to_string(),
+        "agent-simple-attempt0".to_string(),
+        "--task".to_string(),
+        "simple".to_string(),
+    ];
+    match dispatch(&args) {
+        Action::CliMode(sub, rest) => {
+            assert_eq!(sub, "verify-runner");
+            assert_eq!(rest[0], "--target");
+            assert_eq!(rest[1], "tilelang");
+        }
+        _ => panic!("expected CliMode"),
+    }
+}
+
+#[test]
 fn batch_subcommand_routes_to_cli_mode() {
     let args = vec![
         "batch".to_string(),
