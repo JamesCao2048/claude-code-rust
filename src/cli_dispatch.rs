@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Reserved-subcommand dispatcher: routes `lingxi-ascendc run|verify-env|skill`
+//! Reserved-subcommand dispatcher: routes `lingxi-ascendc run|verify-env|skill|batch|verify-runner`
 //! to the Python engine CLI; otherwise falls through to the TUI.
 
-pub const RESERVED_SUBCOMMANDS: &[&str] = &["run", "verify-env", "skill"];
+pub const RESERVED_SUBCOMMANDS: &[&str] =
+    &["run", "verify-env", "skill", "batch", "verify-runner"];
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Action {
