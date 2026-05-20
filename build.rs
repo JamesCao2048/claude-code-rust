@@ -2,6 +2,7 @@ use std::env;
 use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
+use std::process::Command;
 
 const MANIFEST_FILE: &str = "PACKAGED_RESOURCES.txt";
 
@@ -12,6 +13,8 @@ fn main() -> io::Result<()> {
     let manifest_path = repo_root.join(MANIFEST_FILE);
     let out_root =
         PathBuf::from(env::var("OUT_DIR").map_err(io::Error::other)?).join("lingxi_resources");
+
+    emit_build_metadata(repo_root, &crate_dir);
 
     println!("cargo:rerun-if-changed={}", manifest_path.display());
 
@@ -144,6 +147,54 @@ fn copy_file(source: &Path, target: &Path) -> io::Result<()> {
     }
     fs::copy(source, target)?;
     Ok(())
+}
+
+// Emit LINGXI_BUILD_SHA + LINGXI_BUILD_DIRTY as rustc env vars so the binary
+// can print which commit it was built from. Falls back to "unknown" when git
+// isn't available (e.g. tarball builds) — the binary still prints a version,
+// just without provenance.
+fn emit_build_metadata(repo_root: &Path, submodule_dir: &Path) {
+    let parent_sha = git_short_sha(repo_root).unwrap_or_else(|| "unknown".to_owned());
+    let submodule_sha = git_short_sha(submodule_dir).unwrap_or_else(|| "unknown".to_owned());
+    let dirty_suffix = if git_is_dirty(repo_root) || git_is_dirty(submodule_dir) {
+        "-dirty"
+    } else {
+        ""
+    };
+    let crate_version = env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.0.0".to_owned());
+    let version_string =
+        format!("{crate_version} ({parent_sha}+sub:{submodule_sha}{dirty_suffix})");
+    println!("cargo:rustc-env=LINGXI_BUILD_SHA={parent_sha}");
+    println!("cargo:rustc-env=LINGXI_BUILD_SUBMODULE_SHA={submodule_sha}");
+    println!("cargo:rustc-env=LINGXI_BUILD_DIRTY={}", if dirty_suffix.is_empty() { "0" } else { "1" });
+    println!("cargo:rustc-env=LINGXI_VERSION_STRING={version_string}");
+    // Trigger rebuild when HEAD moves. Submodule HEAD lives under parent's
+    // .git/modules so the parent HEAD path covers most cases; explicitly
+    // watch the submodule's gitdir pointer file too.
+    println!("cargo:rerun-if-changed={}/.git/HEAD", repo_root.display());
+    println!("cargo:rerun-if-changed={}/.git", submodule_dir.display());
+}
+
+fn git_short_sha(dir: &Path) -> Option<String> {
+    let out = Command::new("git")
+        .args(["rev-parse", "--short=12", "HEAD"])
+        .current_dir(dir)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8(out.stdout).ok()?.trim().to_owned();
+    if s.is_empty() { None } else { Some(s) }
+}
+
+fn git_is_dirty(dir: &Path) -> bool {
+    Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(dir)
+        .output()
+        .ok()
+        .is_some_and(|out| out.status.success() && !out.stdout.is_empty())
 }
 
 fn copy_dir_recursive(source: &Path, target: &Path) -> io::Result<()> {

@@ -1,5 +1,6 @@
 use include_dir::{Dir, include_dir};
 use std::fs;
+use std::fs::{File, TryLockError};
 use std::io;
 use std::path::{Path, PathBuf};
 use tracing::warn;
@@ -7,6 +8,11 @@ use tracing::warn;
 static EMBEDDED_RESOURCES_DIR: Dir<'_> = include_dir!("$OUT_DIR/lingxi_resources");
 
 const MARKER_FILENAME: &str = ".lingxi_marker";
+// Advisory lock file held for the lifetime of an EmbeddedResourceDir.
+// cleanup_orphans() probes try_lock on this file to tell live dirs apart
+// from stale ones, so a long-running TUI past the 24h age cutoff is not
+// deleted underneath itself by a concurrent invocation.
+const LOCK_FILENAME: &str = ".lingxi_lock";
 const PLUGIN_MANIFEST: &str = r#"{
   "name": "lingxi-ascendc",
   "version": "0.1.0",
@@ -19,6 +25,9 @@ const PLUGIN_MANIFEST: &str = r#"{
 
 pub struct EmbeddedResourceDir {
     path: PathBuf,
+    // Held for the lifetime of the struct. flock is released on Drop
+    // (or when the process exits, even if Drop doesn't run).
+    _lock: File,
 }
 
 impl EmbeddedResourceDir {
@@ -37,7 +46,22 @@ impl EmbeddedResourceDir {
         extract_plugin_layout(&base)?;
         fs::write(base.join(MARKER_FILENAME), id.to_string())?;
 
-        Ok(Self { path: base })
+        // Take an exclusive advisory lock so cleanup_orphans() from a
+        // concurrently-started binary can tell this dir is still in use.
+        // The file lives inside the resource dir itself; uuid uniqueness
+        // means try_lock should always succeed here — failure means
+        // someone else got the same uuid (vanishingly unlikely) or the
+        // filesystem doesn't support advisory locks (NFS without lockd).
+        let lock_path = base.join(LOCK_FILENAME);
+        let lock_file = File::create(&lock_path)?;
+        if let Err(e) = lock_file.try_lock() {
+            return Err(io::Error::other(format!(
+                "failed to acquire resource dir lock at {}: {e:?}",
+                lock_path.display(),
+            )));
+        }
+
+        Ok(Self { path: base, _lock: lock_file })
     }
 
     #[must_use]
@@ -57,6 +81,19 @@ impl EmbeddedResourceDir {
             let marker = path.join(MARKER_FILENAME);
             if !marker.exists() {
                 continue;
+            }
+            // Skip dirs still held by a live process. A dir with no
+            // lock file at all is pre-flock-era state — fall through to
+            // the age check. With a lock file present, only proceed
+            // when we can take the lock (i.e. no one holds it).
+            let lock_path = path.join(LOCK_FILENAME);
+            if lock_path.exists() {
+                let Ok(probe) = File::open(&lock_path) else { continue };
+                match probe.try_lock() {
+                    Ok(()) => { /* lock free — proceed to age check */ }
+                    Err(TryLockError::WouldBlock) => continue,
+                    Err(TryLockError::Error(_)) => continue,
+                }
             }
             let Ok(meta) = fs::metadata(&marker) else { continue };
             let Ok(modified) = meta.modified() else { continue };
