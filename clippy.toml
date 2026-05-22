@@ -1,5 +1,5 @@
 # MSRV for this CLI tool (matches rust-version in Cargo.toml)
-msrv = "1.88.0"
+msrv = "1.89.0"
 
 # Binary crate -- no public API to break
 avoid-breaking-exported-api = false
