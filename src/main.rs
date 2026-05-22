@@ -22,71 +22,8 @@ fn main() {
     }
 }
 
-/// Locate the install-alongside Python dependency dir.
-///
-/// `make install` does `pip install --target $LIBDIR/python_deps -r runtime/requirements.txt`,
-/// landing the deps next to the installed binary. The shipped binary lives at
-/// `$LIBDIR/lingxi-ascendc` and is symlinked from `$BINDIR/lingxi-ascendc`.
-///
-/// On macOS (and Windows) `current_exe()` does **not** follow the symlink — it
-/// returns the path the user invoked (`$BINDIR/lingxi-ascendc`). We therefore
-/// canonicalize the path so `parent()` lands on the real `$LIBDIR/` next to
-/// the binary, not on `$BINDIR/`. Returns `None` for dev runs where no
-/// sibling `python_deps/` exists.
-fn python_deps_dir() -> Option<std::path::PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    let resolved = std::fs::canonicalize(&exe).unwrap_or(exe);
-    let dir = resolved.parent()?.join("python_deps");
-    if dir.is_dir() { Some(dir) } else { None }
-}
-
-fn run_cli_mode(subcmd: &str, rest: &[String], resource_dir: &std::path::Path) -> anyhow::Result<i32> {
-    // Compose PYTHONPATH: extracted resources (engine/ lives here) plus the
-    // install-alongside python_deps dir if present.
-    let sep = if cfg!(windows) { ";" } else { ":" };
-    let mut pythonpath = resource_dir.as_os_str().to_owned();
-    if let Some(deps) = python_deps_dir() {
-        pythonpath.push(sep);
-        pythonpath.push(deps.as_os_str());
-    }
-    if let Some(existing) = std::env::var_os("PYTHONPATH") {
-        if !existing.is_empty() {
-            pythonpath.push(sep);
-            pythonpath.push(existing);
-        }
-    }
-
-    let mut cmd = std::process::Command::new("python3");
-    cmd.arg("-m")
-        .arg("engine.cli")
-        .arg(subcmd)
-        .args(rest)
-        .env("PYTHONPATH", &pythonpath)
-        .env("LINGXI_RESOURCE_DIR", resource_dir)
-        .stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit());
-
-    let status = cmd
-        .status()
-        .map_err(|e| anyhow::anyhow!("failed to spawn python3 -m engine.cli: {e}"))?;
-
-    Ok(status.code().unwrap_or(1))
-}
-
 #[allow(clippy::too_many_lines)]
 fn run() -> anyhow::Result<i32> {
-    // Check for reserved subcommands before clap parse so they bypass the TUI.
-    let raw_args: Vec<String> = std::env::args().skip(1).collect();
-    match lingxi_ascendc::cli_dispatch::dispatch(&raw_args) {
-        lingxi_ascendc::cli_dispatch::Action::CliMode(subcmd, rest) => {
-            lingxi_ascendc::embedded_resources::EmbeddedResourceDir::cleanup_orphans();
-            let resource_dir = lingxi_ascendc::embedded_resources::EmbeddedResourceDir::extract()
-                .map_err(|e| anyhow::anyhow!("failed to extract embedded resources: {e}"))?;
-            return run_cli_mode(&subcmd, &rest, resource_dir.path());
-        }
-        lingxi_ascendc::cli_dispatch::Action::TuiMode(_) => {}
-    }
-
     let cli = Cli::parse();
     // SAFETY: called before any threads are spawned (single-threaded at this point).
     // Must run before logging init so that env-driven log filters from settings.json apply,

@@ -3,7 +3,6 @@
 
 pub mod agent;
 pub mod app;
-pub mod cli_dispatch;
 pub mod embedded_resources;
 pub mod error;
 pub mod headless;
@@ -41,6 +40,14 @@ pub unsafe fn apply_settings_env_overrides() -> Vec<String> {
 }
 
 use clap::{Parser, Subcommand, ValueEnum};
+
+/// Version string surfaced by `--version`. Assembled at build time
+/// (see `build.rs::emit_build_metadata`) as
+/// `<crate-version> (<parent-sha>+sub:<submodule-sha>[-dirty])`.
+/// The SHA is the load-bearing piece for multi-worktree dev: when several
+/// worktrees race `make install` into a shared $PREFIX, this is how you
+/// tell whose build actually ended up on disk.
+pub const VERSION_STRING: &str = env!("LINGXI_VERSION_STRING");
 
 #[derive(Clone, Copy, Debug, ValueEnum, PartialEq, Eq)]
 pub enum CliPermissionMode {
@@ -106,6 +113,7 @@ impl DiagnosticsPreset {
 
 #[derive(Parser, Debug)]
 #[command(name = "lingxi-ascendc", about = "Lingxi AscendC Operator Development Tool")]
+#[command(version = VERSION_STRING)]
 #[command(
     after_help = "Reserved subcommands (routed to Python engine, not listed under Commands above):\n  run                  Drive a workflow end-to-end\n  verify-env           Probe LLM + NPU environment reachability\n  verify-runner        Run skill verifier on NPU (used by agent prompts)\n  skill <name>         Invoke a packaged skill directly\n  batch                Batch driver for multi-op runs\n\nExamples:\n  lingxi-ascendc --enable-logs --diagnostics-preset session\n  lingxi-ascendc --enable-logs --diagnostics-preset render\n  lingxi-ascendc --features perf --enable-logs --enable-perf --diagnostics-preset full"
 )]
