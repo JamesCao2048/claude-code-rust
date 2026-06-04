@@ -115,7 +115,7 @@ impl DiagnosticsPreset {
 #[command(name = "lingxi-ascendc", about = "Lingxi AscendC Operator Development Tool")]
 #[command(version = VERSION_STRING)]
 #[command(
-    after_help = "Reserved subcommands (routed to Python engine, not listed under Commands above):\n  run                  Drive a workflow end-to-end\n  verify-env           Probe LLM + NPU environment reachability\n  verify-runner        Run skill verifier on NPU (used by agent prompts)\n  skill <name>         Invoke a packaged skill directly\n  batch                Batch driver for multi-op runs\n\nExamples:\n  lingxi-ascendc --enable-logs --diagnostics-preset session\n  lingxi-ascendc --enable-logs --diagnostics-preset render\n  lingxi-ascendc --features perf --enable-logs --enable-perf --diagnostics-preset full"
+    after_help = "Reserved subcommands (routed to Python engine, not listed under Commands above):\n  generate             Generate a new AscendC operator\n  debug                Diagnose / fix an operator's precision or determinism\n  optimize             Tune the performance of a correct kernel\n  research             Research how to implement an operator on AscendC\n  run                  Drive a workflow end-to-end\n  verify-env           Probe LLM + NPU environment reachability\n  verify-runner        Run skill verifier on NPU (used by agent prompts)\n  skill <name>         Invoke a packaged skill directly\n  batch                Batch driver for multi-op runs\n\nExamples:\n  lingxi-ascendc --enable-logs --diagnostics-preset session\n  lingxi-ascendc --enable-logs --diagnostics-preset render\n  lingxi-ascendc --features perf --enable-logs --enable-perf --diagnostics-preset full"
 )]
 #[allow(clippy::struct_excessive_bools)]
 pub struct Cli {

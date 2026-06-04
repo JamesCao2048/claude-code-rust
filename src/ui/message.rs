@@ -1113,14 +1113,69 @@ fn welcome_lines(block: &WelcomeBlock, _width: u16) -> Vec<Line<'static>> {
         Style::default().fg(theme::DIM),
     )));
     lines.push(Line::default());
-    lines.push(Line::from(Span::styled(
-        format!("{pad}Commands:"),
-        Style::default().fg(theme::RUST_ORANGE).add_modifier(Modifier::BOLD),
-    )));
-    append_embedded_command_lines(&mut lines, pad);
+    // Prefer a runtime-configurable intro (`$LINGXI_RESOURCE_DIR/tui-welcome.md`)
+    // exported by the dispatcher. If it is missing, fall back to the build-time
+    // embedded `.claude/commands/*.md` listing so existing behavior + tests hold.
+    if !append_dynamic_welcome_lines(&mut lines, pad) {
+        lines.push(Line::from(Span::styled(
+            format!("{pad}Commands:"),
+            Style::default().fg(theme::RUST_ORANGE).add_modifier(Modifier::BOLD),
+        )));
+        append_embedded_command_lines(&mut lines, pad);
+    }
     lines.push(Line::default());
 
     lines
+}
+
+/// Render the runtime-configurable welcome intro from
+/// `$LINGXI_RESOURCE_DIR/tui-welcome.md` if it exists. Returns `true` when the
+/// file was found and rendered, `false` to signal the caller to fall back to the
+/// embedded command listing (env var unset or file absent/unreadable).
+///
+/// The file is plain markdown; we render lines as-is with light styling: `#`/`##`
+/// headings in bold orange, `⚠` warning lines in yellow, everything else dimmed.
+fn append_dynamic_welcome_lines(lines: &mut Vec<Line<'static>>, pad: &str) -> bool {
+    let Ok(resource_dir) = std::env::var("LINGXI_RESOURCE_DIR") else {
+        return false;
+    };
+    if resource_dir.trim().is_empty() {
+        return false;
+    }
+    append_welcome_intro_from_dir(lines, pad, std::path::Path::new(&resource_dir))
+}
+
+/// Read `<resource_dir>/tui-welcome.md` and push its styled lines. Returns `true`
+/// when the file was rendered, `false` when absent/unreadable. Split out from the
+/// env lookup so it can be unit-tested without mutating the global environment.
+fn append_welcome_intro_from_dir(
+    lines: &mut Vec<Line<'static>>,
+    pad: &str,
+    resource_dir: &std::path::Path,
+) -> bool {
+    // Packaged layout puts resources under `<resource_dir>/.claude/` (the embedded
+    // extract root holds `.claude/commands`, `.claude/.claude-plugin`, ...). Prefer
+    // that; fall back to the bare path so a flat dev resource_dir also works.
+    let content = std::fs::read_to_string(resource_dir.join(".claude").join("tui-welcome.md"))
+        .or_else(|_| std::fs::read_to_string(resource_dir.join("tui-welcome.md")));
+    let Ok(content) = content else {
+        return false;
+    };
+
+    for raw_line in content.lines() {
+        let trimmed = raw_line.trim_start();
+        let style = if trimmed.starts_with('#') {
+            Style::default().fg(theme::RUST_ORANGE).add_modifier(Modifier::BOLD)
+        } else if trimmed.starts_with('⚠') {
+            Style::default().fg(theme::STATUS_WARNING)
+        } else if trimmed.starts_with('-') {
+            Style::default().fg(theme::DIM).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme::DIM)
+        };
+        lines.push(Line::from(Span::styled(format!("{pad}{raw_line}"), style)));
+    }
+    true
 }
 
 /// Render the slash-command listing in the welcome banner from the binary's
@@ -1405,6 +1460,40 @@ mod tests {
         let result = preprocess_markdown(input);
         assert!(!result.contains("\n\n\n"));
         assert!(result.contains("**Heading**"));
+    }
+
+    // dynamic welcome intro
+
+    #[test]
+    fn welcome_intro_renders_file_when_present() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("tui-welcome.md"),
+            "# Title\n- **/generate** — gen\n⚠ warning\nplain body\n",
+        )
+        .expect("write welcome");
+
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        let rendered = append_welcome_intro_from_dir(&mut lines, "", dir.path());
+
+        assert!(rendered);
+        let texts: Vec<String> =
+            lines.iter().map(|line| line.spans.iter().map(|s| s.content.as_ref()).collect()).collect();
+        assert_eq!(texts, vec!["# Title", "- **/generate** — gen", "⚠ warning", "plain body"]);
+        // heading -> bold orange, warning -> yellow, list -> bold dim, body -> dim
+        assert_eq!(lines[0].spans[0].style.fg, Some(theme::RUST_ORANGE));
+        assert!(lines[0].spans[0].style.add_modifier.contains(Modifier::BOLD));
+        assert_eq!(lines[2].spans[0].style.fg, Some(theme::STATUS_WARNING));
+        assert_eq!(lines[3].spans[0].style.fg, Some(theme::DIM));
+    }
+
+    #[test]
+    fn welcome_intro_falls_back_when_file_absent() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        let rendered = append_welcome_intro_from_dir(&mut lines, "", dir.path());
+        assert!(!rendered);
+        assert!(lines.is_empty());
     }
 
     #[test]
