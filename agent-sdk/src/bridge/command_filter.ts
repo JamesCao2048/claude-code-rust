@@ -44,7 +44,11 @@ export function loadPluginSkillNames(): Set<string> {
     return skillNames;
   }
   try {
-    const manifestPath = path.join(resourceDir, ".claude-plugin", "plugin.json");
+    // Packaged layout nests the plugin under `<resource_dir>/.claude/`; prefer that,
+    // fall back to a flat layout for dev resource dirs.
+    const nested = path.join(resourceDir, ".claude", ".claude-plugin", "plugin.json");
+    const flat = path.join(resourceDir, ".claude-plugin", "plugin.json");
+    const manifestPath = fs.existsSync(nested) ? nested : flat;
     const raw = fs.readFileSync(manifestPath, "utf8");
     const manifest = JSON.parse(raw) as { skills?: unknown };
     if (Array.isArray(manifest.skills)) {

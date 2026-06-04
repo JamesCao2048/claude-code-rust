@@ -1153,8 +1153,12 @@ fn append_welcome_intro_from_dir(
     pad: &str,
     resource_dir: &std::path::Path,
 ) -> bool {
-    let welcome_path = resource_dir.join("tui-welcome.md");
-    let Ok(content) = std::fs::read_to_string(&welcome_path) else {
+    // Packaged layout puts resources under `<resource_dir>/.claude/` (the embedded
+    // extract root holds `.claude/commands`, `.claude/.claude-plugin`, ...). Prefer
+    // that; fall back to the bare path so a flat dev resource_dir also works.
+    let content = std::fs::read_to_string(resource_dir.join(".claude").join("tui-welcome.md"))
+        .or_else(|_| std::fs::read_to_string(resource_dir.join("tui-welcome.md")));
+    let Ok(content) = content else {
         return false;
     };
 

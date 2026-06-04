@@ -54,6 +54,7 @@ import {
 } from "./user_interaction.js";
 import { mapAvailableAgents, emitAvailableAgentsIfChanged, refreshAvailableAgents } from "./agents.js";
 import { emitAuthRequired, emitFastModeUpdateIfChanged } from "./error_classification.js";
+import { makeSharedWriteDenyHook } from "./shared_write_deny_hook.js";
 
 export type ConnectEventKind = "connected" | "session_replaced";
 
@@ -904,6 +905,18 @@ export function buildQueryOptions(params: QueryOptionsBuilderParams) {
       : {}),
     ...(process.env.LINGXI_RESOURCE_DIR
       ? { plugins: [{ type: "local" as const, path: process.env.LINGXI_RESOURCE_DIR }] }
+      : {}),
+    // G-SHARED-WRITE: deny the top-level agent writing shared knowledge/golden
+    // paths. Passed as a query() PreToolUse hook (honored regardless of permission
+    // mode), not a plugin-manifest hook (the SDK ignores those).
+    ...(process.env.LINGXI_RESOURCE_DIR
+      ? {
+          hooks: {
+            PreToolUse: [
+              { matcher: "Write|Edit|MultiEdit|Bash", hooks: [makeSharedWriteDenyHook()] },
+            ],
+          },
+        }
       : {}),
     systemPrompt,
     ...(params.launchSettings.agent_progress_summaries !== undefined
