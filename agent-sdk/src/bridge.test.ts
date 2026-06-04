@@ -15,6 +15,8 @@ import {
   handleTaskSystemMessage,
   handleSdkMessage,
   mapAvailableAgents,
+  filterOutAgentsAndSkills,
+  normalizeInternalName,
   mapAvailableModels,
   mapSessionMessagesToUpdates,
   mapSdkSessions,
@@ -2765,5 +2767,34 @@ describe("buildQueryOptions maxTurns plumbing", () => {
   it("rejects non-positive maxTurns", () => {
     const opts = makeOptions({ settings: { maxTurns: -3 } });
     expect(opts.maxTurns).toBe(2000);
+  });
+});
+
+describe("slash command filter hides internal agents + skills", () => {
+  it("normalizes namespaced / slashed / .md names to bare lowercase", () => {
+    expect(normalizeInternalName("/generate")).toBe("generate");
+    expect(normalizeInternalName("lingxi-ascendc:aog-kernel-worker")).toBe("aog-kernel-worker");
+    expect(normalizeInternalName("cannbot-ascendc-developer.md")).toBe("cannbot-ascendc-developer");
+    expect(normalizeInternalName("  /lingxi-ascendc:Ascendc-Debug  ")).toBe("ascendc-debug");
+  });
+
+  it("drops commands that match an agent or skill, keeps genuine commands", () => {
+    const commands = [
+      { name: "generate", description: "", input_hint: undefined },
+      { name: "lingxi-ascendc:aog-kernel-worker", description: "", input_hint: undefined },
+      { name: "lingxi-ascendc:ascendc-debug", description: "", input_hint: undefined },
+      { name: "clear", description: "", input_hint: undefined },
+    ];
+    const visible = filterOutAgentsAndSkills(
+      commands,
+      ["aog-kernel-worker", "cannbot-ascendc-developer"],
+      ["ascendc-debug", "ascendc-translator"],
+    );
+    expect(visible.map((c) => c.name)).toEqual(["generate", "clear"]);
+  });
+
+  it("returns commands unchanged when no agents or skills are known", () => {
+    const commands = [{ name: "generate", description: "", input_hint: undefined }];
+    expect(filterOutAgentsAndSkills(commands, [], [])).toEqual(commands);
   });
 });

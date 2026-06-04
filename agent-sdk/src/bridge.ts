@@ -82,6 +82,11 @@ export {
 export { handleSdkMessage, handleTaskSystemMessage } from "./bridge/message_handlers.js";
 export { mapAvailableAgents } from "./bridge/agents.js";
 export {
+  filterOutAgentsAndSkills,
+  loadPluginSkillNames,
+  normalizeInternalName,
+} from "./bridge/command_filter.js";
+export {
   attachRequestUserDialogInterceptor,
   buildQueryOptions,
   mapAvailableModels,

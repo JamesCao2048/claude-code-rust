@@ -30,6 +30,7 @@ import {
 } from "./tool_calls.js";
 import { emitAuthRequired, classifyTurnErrorKind, emitFastModeUpdateIfChanged } from "./error_classification.js";
 import { mapAvailableAgentsFromNames, emitAvailableAgentsIfChanged, refreshAvailableAgents } from "./agents.js";
+import { filterOutAgentsAndSkills, loadPluginSkillNames } from "./command_filter.js";
 import {
   buildApiRetryUpdate,
   buildRateLimitUpdate,
@@ -587,15 +588,27 @@ export function handleSdkMessage(session: SessionState, message: SDKMessage): vo
         emitAvailableAgentsIfChanged(session, mapAvailableAgentsFromNames(msg.agents));
       }
 
-      void session.query
-        .supportedCommands()
-        .then((commands) => {
+      // Resolve agent names alongside the command list so the picker can hide
+      // internal agents + skills (see command_filter.ts). Skill names come from
+      // the local plugin manifest; agent names from the SDK.
+      const skillNames = loadPluginSkillNames();
+      const supportedAgentsPromise =
+        typeof session.query.supportedAgents === "function"
+          ? session.query.supportedAgents().catch(() => [])
+          : Promise.resolve([]);
+      void Promise.all([session.query.supportedCommands(), supportedAgentsPromise])
+        .then(([commands, agents]) => {
+          const agentNames = agents.map((agent) => agent.name);
           const mapped: AvailableCommand[] = commands.map((command) => ({
             name: command.name,
             description: command.description ?? "",
             input_hint: command.argumentHint ?? undefined,
           }));
-          emitSessionUpdate(session.sessionId, { type: "available_commands_update", commands: mapped });
+          const visible = filterOutAgentsAndSkills(mapped, agentNames, skillNames);
+          emitSessionUpdate(session.sessionId, {
+            type: "available_commands_update",
+            commands: visible,
+          });
         })
         .catch(() => {
           // Best-effort only; slash commands from init were already emitted.
