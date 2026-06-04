@@ -580,7 +580,14 @@ export function handleSdkMessage(session: SessionState, message: SDKMessage): vo
           .filter((entry): entry is string => typeof entry === "string")
           .map((name) => ({ name, description: "", input_hint: undefined }));
         if (commands.length > 0) {
-          emitSessionUpdate(session.sessionId, { type: "available_commands_update", commands });
+          // Filter internal agents/skills here too: this emit path is separate from
+          // the supportedCommands() filter, so without it the slash picker re-shows
+          // skills surfaced as commands.
+          const visible = filterOutAgentsAndSkills(commands, [], loadPluginSkillNames());
+          emitSessionUpdate(session.sessionId, {
+            type: "available_commands_update",
+            commands: visible,
+          });
         }
       }
 

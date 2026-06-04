@@ -55,6 +55,7 @@ import {
 import { mapAvailableAgents, emitAvailableAgentsIfChanged, refreshAvailableAgents } from "./agents.js";
 import { emitAuthRequired, emitFastModeUpdateIfChanged } from "./error_classification.js";
 import { makeSharedWriteDenyHook } from "./shared_write_deny_hook.js";
+import { filterOutAgentsAndSkills, loadPluginSkillNames } from "./command_filter.js";
 
 export type ConnectEventKind = "connected" | "session_replaced";
 
@@ -637,7 +638,14 @@ export async function createSession(params: {
           }))
         : [];
       if (commands.length > 0) {
-        emitSessionUpdate(session.sessionId, { type: "available_commands_update", commands });
+        // Filter internal agents/skills from the init-result command list too
+        // (separate emit path from supportedCommands()).
+        const agentNames = mapAvailableAgents(result.agents).map((a) => a.name);
+        const visible = filterOutAgentsAndSkills(commands, agentNames, loadPluginSkillNames());
+        emitSessionUpdate(session.sessionId, {
+          type: "available_commands_update",
+          commands: visible,
+        });
       }
       emitAvailableAgentsIfChanged(session, mapAvailableAgents(result.agents));
       refreshAvailableAgents(session);
