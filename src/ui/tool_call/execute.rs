@@ -202,9 +202,30 @@ pub(super) fn render_workflow_progress(progress: &WorkflowProgressState) -> Vec<
         Span::styled("running", Style::default().fg(theme::DIM)),
     ]));
     for row in &progress.actions {
-        lines.push(render_action_row(row));
+        push_action_row(&mut lines, row);
     }
     lines
+}
+
+/// Max nested subagent rows shown per action (Phase 2), to keep the box bounded.
+const MAX_SUBAGENT_ROWS: usize = 6;
+
+/// Append an action row plus its nested subagent tool rows (Phase 2).
+fn push_action_row(lines: &mut Vec<Line<'static>>, row: &crate::app::WorkflowActionRow) {
+    lines.push(render_action_row(row));
+    // Nested subagent tool calls (from agent_stream.jsonl). Indented one level
+    // under the action. Absent for current runs (engine emits no stream yet).
+    let total = row.subagent_tools.len();
+    let shown = total.min(MAX_SUBAGENT_ROWS);
+    if total > MAX_SUBAGENT_ROWS {
+        lines.push(Line::from(Span::styled(
+            format!("      \u{2026} {} earlier tool calls", total - shown),
+            Style::default().fg(theme::DIM),
+        )));
+    }
+    for sub in row.subagent_tools.iter().skip(total - shown) {
+        lines.push(render_subagent_row(sub));
+    }
 }
 
 fn render_action_row(row: &crate::app::WorkflowActionRow) -> Line<'static> {
@@ -236,6 +257,28 @@ fn render_action_row(row: &crate::app::WorkflowActionRow) -> Line<'static> {
     }
 }
 
+fn render_subagent_row(sub: &crate::app::WorkflowSubagentToolRow) -> Line<'static> {
+    let name = if sub.name.is_empty() { "tool" } else { sub.name.as_str() };
+    if sub.completed {
+        let mut spans = vec![
+            Span::styled("      \u{2713} ", Style::default().fg(Color::Green)),
+            Span::styled(name.to_owned(), Style::default().fg(theme::DIM)),
+        ];
+        if let Some(status) = sub.status.as_deref().filter(|s| !s.is_empty()) {
+            spans.push(Span::styled(
+                format!("  {status}"),
+                Style::default().fg(theme::DIM),
+            ));
+        }
+        Line::from(spans)
+    } else {
+        Line::from(vec![
+            Span::styled("      \u{2219} ", Style::default().fg(theme::DIM)),
+            Span::styled(name.to_owned(), Style::default().fg(theme::DIM)),
+        ])
+    }
+}
+
 /// Compose an action label from kind + name, tolerating either being empty
 /// (e.g. a synthesized completion-only row).
 fn action_label(kind: &str, name: &str) -> String {
@@ -252,6 +295,7 @@ mod tests {
     use super::*;
     use crate::app::{
         BlockCache, WorkflowActionCompletion, WorkflowActionRow, WorkflowFinalizeRow,
+        WorkflowSubagentToolRow,
     };
 
     fn render_text(lines: &[Line<'static>]) -> Vec<String> {
@@ -309,12 +353,14 @@ mod tests {
                 status: WorkflowActionStatus::Ok,
                 outcome: "clean".to_owned(),
             }),
+            subagent_tools: Vec::new(),
         });
         s.actions.push(WorkflowActionRow {
             action_id: "a2".to_owned(),
             kind: "verify".to_owned(),
             name: "verify".to_owned(),
             completed: None,
+            subagent_tools: Vec::new(),
         });
 
         let tc = bash_with_progress(s);
@@ -347,6 +393,7 @@ mod tests {
                 status: WorkflowActionStatus::Ok,
                 outcome: "clean".to_owned(),
             }),
+            subagent_tools: Vec::new(),
         });
         s.finalized = Some(WorkflowFinalizeRow {
             kind: WorkflowFinalizeKind::Done,
@@ -358,6 +405,39 @@ mod tests {
         assert!(joined.contains("done (PASS)"), "summary missing:\n{joined}");
         assert!(joined.contains("all checks pass"), "reason missing:\n{joined}");
         // Action breakdown is still shown under the summary.
+        // (continued below)
         assert!(joined.contains("spawn_agent: w"), "action kept:\n{joined}");
+    }
+
+    #[test]
+    fn nested_subagent_tool_rows_render_under_action() {
+        let mut s = state();
+        s.workflow = Some("gen".to_owned());
+        s.actions.push(WorkflowActionRow {
+            action_id: "a1".to_owned(),
+            kind: "spawn_agent".to_owned(),
+            name: "worker".to_owned(),
+            completed: None,
+            subagent_tools: vec![
+                WorkflowSubagentToolRow {
+                    tool_call_id: "t1".to_owned(),
+                    name: "Edit".to_owned(),
+                    completed: true,
+                    status: Some("ok".to_owned()),
+                },
+                WorkflowSubagentToolRow {
+                    tool_call_id: "t2".to_owned(),
+                    name: "Bash".to_owned(),
+                    completed: false,
+                    status: None,
+                },
+            ],
+        });
+
+        let tc = bash_with_progress(s);
+        let joined = render_text(&render_execute_content(&tc)).join("\n");
+        assert!(joined.contains("spawn_agent: worker"), "parent action:\n{joined}");
+        assert!(joined.contains("Edit"), "subagent tool 1:\n{joined}");
+        assert!(joined.contains("Bash"), "subagent tool 2:\n{joined}");
     }
 }

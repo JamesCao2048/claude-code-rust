@@ -121,6 +121,12 @@ pub enum ClientEvent {
         tool_call_id: String,
         update: crate::agent::workflow_tail::WorkflowProgress,
     },
+    /// A subagent tool-call event (Phase 2) from a run's `agent_stream.jsonl`,
+    /// nested under the matching action row of the named Bash tool call.
+    WorkflowSubagentEvent {
+        tool_call_id: String,
+        event: crate::agent::workflow_tail::SubagentToolEvent,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -15,11 +15,12 @@ use std::path::PathBuf;
 
 use crate::agent::events::ClientEvent;
 use crate::agent::workflow_tail::{
-    self, ActionStatus, FinalizeKind, RunTarget, WorkflowProgress,
+    self, ActionStatus, FinalizeKind, RunTarget, SubagentPhase, SubagentToolEvent, WorkflowProgress,
 };
 use crate::app::{
     App, MessageBlock, ToolCallInfo, WorkflowActionCompletion, WorkflowActionRow,
     WorkflowActionStatus, WorkflowFinalizeKind, WorkflowFinalizeRow, WorkflowProgressState,
+    WorkflowSubagentToolRow,
 };
 
 /// Inspect a freshly-built Bash tool call. If its command is a fresh
@@ -71,25 +72,43 @@ pub(super) fn maybe_start_workflow_tail(app: &mut App, tool_call_id: &str) {
         return;
     }
 
-    let event_tx = app.event_tx.clone();
-    let id = tool_call_id.to_owned();
+    let stream_path = target.agent_stream_path();
     tracing::info!(
         target: crate::logging::targets::APP_COMMAND,
         event_name = "workflow_tail_started",
         message = "started tailing workflow events.jsonl",
         outcome = "start",
-        tool_call_id = %id,
+        tool_call_id = %tool_call_id,
         run_id = target.run_id.as_deref().unwrap_or("<newest-dir>"),
         events_path = %events_path.display(),
     );
 
-    // The emit closure captures a non-Send mpsc sender (ClientEvent is !Send),
-    // so this must run on the LocalSet — same pattern as update_check.
+    // The emit closures capture a non-Send mpsc sender (ClientEvent is !Send),
+    // so these must run on the LocalSet — same pattern as update_check.
+    let event_tx = app.event_tx.clone();
+    let id = tool_call_id.to_owned();
+    let stop_rx_events = stop_rx.clone();
     tokio::task::spawn_local(async move {
-        workflow_tail::tail_events(events_path, stop_rx, move |update| {
+        workflow_tail::tail_events(events_path, stop_rx_events, move |update| {
             let _ = event_tx.send(ClientEvent::WorkflowProgress {
                 tool_call_id: id.clone(),
                 update,
+            });
+        })
+        .await;
+    });
+
+    // Phase 2: also tail the sibling agent_stream.jsonl for subagent tool
+    // calls. The engine does not emit this file today, so this is a silent
+    // no-op until it appears (poll-until-exists); it shares the events tail's
+    // stop signal so finalize/abort stops both.
+    let event_tx2 = app.event_tx.clone();
+    let id2 = tool_call_id.to_owned();
+    tokio::task::spawn_local(async move {
+        workflow_tail::tail_agent_stream(stream_path, stop_rx, move |event| {
+            let _ = event_tx2.send(ClientEvent::WorkflowSubagentEvent {
+                tool_call_id: id2.clone(),
+                event,
             });
         })
         .await;
@@ -143,6 +162,81 @@ pub fn apply_workflow_progress(app: &mut App, tool_call_id: &str, update: Workfl
     }
 }
 
+/// Apply one subagent tool event (Phase 2) to the named tool call: nest it
+/// under the action row whose `action_id` matches.
+pub fn apply_workflow_subagent_event(
+    app: &mut App,
+    tool_call_id: &str,
+    event: &SubagentToolEvent,
+) {
+    let Some((mi, bi)) = app.lookup_tool_call(tool_call_id) else {
+        return;
+    };
+    let mut changed = false;
+    if let Some(MessageBlock::ToolCall(tc)) =
+        app.messages.get_mut(mi).and_then(|m| m.blocks.get_mut(bi))
+        && let Some(state) = tc.workflow_progress.as_mut()
+    {
+        changed = apply_subagent_to_state(state, event);
+        if changed {
+            tc.mark_tool_call_layout_dirty();
+        }
+    }
+    if changed {
+        app.sync_render_cache_slot(mi, bi);
+        app.recompute_message_retained_bytes(mi);
+        app.invalidate_layout(crate::app::InvalidationLevel::MessageChanged(mi));
+    }
+}
+
+/// Nest a subagent tool event under its parent action row. A `tool_use` adds
+/// (or refreshes) a row; a `tool_result` marks the matching row completed.
+/// Returns whether anything visible changed. Events whose `action_id` has no
+/// matching action row yet are dropped (the `action_started` event arrives
+/// first in practice; a late attach simply misses early subagent tools).
+fn apply_subagent_to_state(state: &mut WorkflowProgressState, event: &SubagentToolEvent) -> bool {
+    let Some(row) = state.actions.iter_mut().find(|a| a.action_id == event.action_id) else {
+        return false;
+    };
+    match event.phase {
+        SubagentPhase::ToolUse => {
+            if let Some(existing) =
+                row.subagent_tools.iter().find(|t| t.tool_call_id == event.tool_call_id)
+            {
+                // Re-delivery of the same tool_use is a no-op unless it would
+                // change the name.
+                if existing.name == event.name {
+                    return false;
+                }
+            }
+            row.subagent_tools.push(WorkflowSubagentToolRow {
+                tool_call_id: event.tool_call_id.clone(),
+                name: event.name.clone(),
+                completed: false,
+                status: None,
+            });
+            true
+        }
+        SubagentPhase::ToolResult => {
+            if let Some(t) =
+                row.subagent_tools.iter_mut().find(|t| t.tool_call_id == event.tool_call_id)
+            {
+                t.completed = true;
+                t.status.clone_from(&event.status);
+            } else {
+                // Result without a prior use: synthesize a completed row.
+                row.subagent_tools.push(WorkflowSubagentToolRow {
+                    tool_call_id: event.tool_call_id.clone(),
+                    name: event.name.clone(),
+                    completed: true,
+                    status: event.status.clone(),
+                });
+            }
+            true
+        }
+    }
+}
+
 /// Mutate `state` for one update. Returns whether anything visible changed.
 fn apply_to_state(state: &mut WorkflowProgressState, update: WorkflowProgress) -> bool {
     match update {
@@ -163,6 +257,7 @@ fn apply_to_state(state: &mut WorkflowProgressState, update: WorkflowProgress) -
                 kind,
                 name,
                 completed: None,
+                subagent_tools: Vec::new(),
             });
             true
         }
@@ -181,6 +276,7 @@ fn apply_to_state(state: &mut WorkflowProgressState, update: WorkflowProgress) -
                     kind: String::new(),
                     name: String::new(),
                     completed: Some(completion),
+                    subagent_tools: Vec::new(),
                 });
             }
             true
@@ -286,6 +382,66 @@ mod tests {
             s.actions[0].completed.as_ref().unwrap().status,
             WorkflowActionStatus::Fail
         );
+    }
+
+    fn started_action(s: &mut WorkflowProgressState, id: &str) {
+        apply_to_state(
+            s,
+            WorkflowProgress::ActionStarted {
+                action_id: id.into(),
+                kind: "spawn_agent".into(),
+                name: "worker".into(),
+            },
+        );
+    }
+
+    fn sub_event(action_id: &str, tool_call_id: &str, phase: SubagentPhase) -> SubagentToolEvent {
+        SubagentToolEvent {
+            action_id: action_id.into(),
+            agent_name: "worker".into(),
+            tool_call_id: tool_call_id.into(),
+            phase,
+            name: "Bash".into(),
+            status: matches!(phase, SubagentPhase::ToolResult).then(|| "ok".to_owned()),
+        }
+    }
+
+    #[test]
+    fn subagent_tool_use_then_result_nests_and_completes() {
+        let mut s = empty_state();
+        started_action(&mut s, "a1");
+        assert!(apply_subagent_to_state(&mut s, &sub_event("a1", "t1", SubagentPhase::ToolUse)));
+        assert_eq!(s.actions[0].subagent_tools.len(), 1);
+        assert!(!s.actions[0].subagent_tools[0].completed);
+
+        assert!(apply_subagent_to_state(&mut s, &sub_event("a1", "t1", SubagentPhase::ToolResult)));
+        assert_eq!(s.actions[0].subagent_tools.len(), 1, "result updates in place");
+        assert!(s.actions[0].subagent_tools[0].completed);
+        assert_eq!(s.actions[0].subagent_tools[0].status.as_deref(), Some("ok"));
+    }
+
+    #[test]
+    fn subagent_event_for_unknown_action_is_dropped() {
+        let mut s = empty_state();
+        started_action(&mut s, "a1");
+        // Event for a different action id -> no row anywhere, no change.
+        assert!(!apply_subagent_to_state(
+            &mut s,
+            &sub_event("other", "t1", SubagentPhase::ToolUse)
+        ));
+        assert!(s.actions[0].subagent_tools.is_empty());
+    }
+
+    #[test]
+    fn subagent_result_without_use_synthesizes_completed_row() {
+        let mut s = empty_state();
+        started_action(&mut s, "a1");
+        assert!(apply_subagent_to_state(
+            &mut s,
+            &sub_event("a1", "late", SubagentPhase::ToolResult)
+        ));
+        assert_eq!(s.actions[0].subagent_tools.len(), 1);
+        assert!(s.actions[0].subagent_tools[0].completed);
     }
 
     #[test]

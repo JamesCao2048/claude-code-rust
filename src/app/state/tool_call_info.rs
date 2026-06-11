@@ -93,6 +93,20 @@ pub struct WorkflowActionRow {
     pub name: String,
     /// `None` while running; `Some` once completed.
     pub completed: Option<WorkflowActionCompletion>,
+    /// Subagent tool calls nested under this action (Phase 2), keyed by
+    /// `tool_call_id`. Populated from the run's `agent_stream.jsonl`.
+    pub subagent_tools: Vec<WorkflowSubagentToolRow>,
+}
+
+/// One subagent tool-call row nested under a [`WorkflowActionRow`].
+pub struct WorkflowSubagentToolRow {
+    pub tool_call_id: String,
+    /// Tool name (e.g. `Bash`, `Edit`).
+    pub name: String,
+    /// `false` until the matching `tool_result` arrives.
+    pub completed: bool,
+    /// Optional status string from the `tool_result`.
+    pub status: Option<String>,
 }
 
 /// Completion state for an action row.

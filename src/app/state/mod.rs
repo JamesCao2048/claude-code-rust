@@ -23,7 +23,7 @@ pub use messages::{
 pub use tool_call_info::{
     InlinePermission, InlineQuestion, TerminalSnapshotMode, ToolCallInfo, WorkflowActionCompletion,
     WorkflowActionRow, WorkflowActionStatus, WorkflowFinalizeKind, WorkflowFinalizeRow,
-    WorkflowProgressState, is_execute_tool_name,
+    WorkflowProgressState, WorkflowSubagentToolRow, is_execute_tool_name,
 };
 pub use types::{
     AppStatus, CancelOrigin, ExtraUsage, HelpView, HistoryRetentionPolicy, HistoryRetentionStats,

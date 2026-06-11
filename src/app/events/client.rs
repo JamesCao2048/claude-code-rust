@@ -267,5 +267,12 @@ pub fn handle_client_event(app: &mut App, event: ClientEvent) {
         ClientEvent::WorkflowProgress { tool_call_id, update } => {
             super::workflow_progress::apply_workflow_progress(app, &tool_call_id, update);
         }
+        ClientEvent::WorkflowSubagentEvent { tool_call_id, event: subagent_event } => {
+            super::workflow_progress::apply_workflow_subagent_event(
+                app,
+                &tool_call_id,
+                &subagent_event,
+            );
+        }
     }
 }
