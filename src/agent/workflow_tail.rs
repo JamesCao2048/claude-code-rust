@@ -222,6 +222,37 @@ pub enum FinalizeKind {
     Escalated,
 }
 
+/// A single subagent tool-call event from a run's sibling `agent_stream.jsonl`
+/// (Phase 2). Nested under the parent action row keyed by `action_id`.
+///
+/// The engine does not emit this file today; the tail is schema-ready and a
+/// silent no-op while the file is absent. Schema:
+/// `{ts, action_id, agent_name, tool_call_id, kind:"tool_use"|"tool_result",
+/// name, status}`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubagentToolEvent {
+    /// Parent action this subagent belongs to (matches an `action_started`
+    /// `action_id` from events.jsonl).
+    pub action_id: String,
+    /// Subagent name (e.g. `aog-kernel-worker`).
+    pub agent_name: String,
+    /// Tool call id within the subagent; pairs a `tool_use` with its result.
+    pub tool_call_id: String,
+    /// `tool_use` (call started) or `tool_result` (call finished).
+    pub phase: SubagentPhase,
+    /// Tool name (e.g. `Bash`, `Edit`).
+    pub name: String,
+    /// Optional status string carried on a `tool_result`.
+    pub status: Option<String>,
+}
+
+/// Whether a subagent event is a tool invocation or its result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubagentPhase {
+    ToolUse,
+    ToolResult,
+}
+
 /// Raw engine event as it appears on a line of `events.jsonl`. Only the fields
 /// the UI consumes are modeled; unknown fields are ignored so engine-side
 /// schema additions never break the tail.
@@ -286,6 +317,23 @@ struct RawAction {
     name: String,
 }
 
+/// Raw subagent tool event line from `agent_stream.jsonl` (Phase 2).
+#[derive(Debug, Deserialize)]
+struct RawSubagentEvent {
+    #[serde(default)]
+    action_id: String,
+    #[serde(default)]
+    agent_name: String,
+    #[serde(default)]
+    tool_call_id: String,
+    #[serde(default)]
+    kind: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    status: Option<String>,
+}
+
 /// Map one parsed JSON line to a [`WorkflowProgress`], or `None` for events the
 /// UI does not surface (or unparseable lines).
 #[must_use]
@@ -296,6 +344,34 @@ pub fn map_event_line(line: &str) -> Option<WorkflowProgress> {
     }
     let event: RawEvent = serde_json::from_str(trimmed).ok()?;
     map_event(event)
+}
+
+/// Map one `agent_stream.jsonl` line to a [`SubagentToolEvent`], or `None` for
+/// blank/malformed lines or unknown `kind` values. Requires a non-empty
+/// `action_id` so the event can be attached to a parent action row.
+#[must_use]
+pub fn map_agent_stream_line(line: &str) -> Option<SubagentToolEvent> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let raw: RawSubagentEvent = serde_json::from_str(trimmed).ok()?;
+    if raw.action_id.is_empty() {
+        return None;
+    }
+    let phase = match raw.kind.as_str() {
+        "tool_use" => SubagentPhase::ToolUse,
+        "tool_result" => SubagentPhase::ToolResult,
+        _ => return None,
+    };
+    Some(SubagentToolEvent {
+        action_id: raw.action_id,
+        agent_name: raw.agent_name,
+        tool_call_id: raw.tool_call_id,
+        phase,
+        name: raw.name,
+        status: raw.status.filter(|s| !s.is_empty()),
+    })
 }
 
 fn map_event(event: RawEvent) -> Option<WorkflowProgress> {
@@ -435,17 +511,69 @@ fn truncate(s: &str) -> String {
 /// (this task is intended to run on a `LocalSet` via `spawn_local`).
 pub async fn tail_events<F>(
     events_path: PathBuf,
-    mut stop: tokio::sync::watch::Receiver<bool>,
+    stop: tokio::sync::watch::Receiver<bool>,
     mut emit: F,
 ) where
     F: FnMut(WorkflowProgress),
+{
+    follow_file(events_path, stop, |line| match map_event_line(line) {
+        Some(update) => {
+            let terminal = matches!(update, WorkflowProgress::Finalized { .. });
+            emit(update);
+            if terminal {
+                LineAction::Stop
+            } else {
+                LineAction::Continue
+            }
+        }
+        None => LineAction::Continue,
+    })
+    .await;
+}
+
+/// Tail a run's sibling `agent_stream.jsonl` (Phase 2) and forward every
+/// [`SubagentToolEvent`] to `emit`. The engine does not emit this file today,
+/// so this is a silent no-op until the file appears (poll-until-exists), then
+/// follows appended lines like [`tail_events`]. There is no terminal event for
+/// the subagent stream; it runs until the stop signal fires.
+pub async fn tail_agent_stream<F>(
+    stream_path: PathBuf,
+    stop: tokio::sync::watch::Receiver<bool>,
+    mut emit: F,
+) where
+    F: FnMut(SubagentToolEvent),
+{
+    follow_file(stream_path, stop, |line| {
+        if let Some(event) = map_agent_stream_line(line) {
+            emit(event);
+        }
+        LineAction::Continue
+    })
+    .await;
+}
+
+/// Whether the follow loop should keep reading or stop after a line.
+enum LineAction {
+    Continue,
+    Stop,
+}
+
+/// Poll-wait for `path`, then follow appended whole lines, invoking `on_line`
+/// for each. Buffers partial trailing lines. Returns when `on_line` yields
+/// [`LineAction::Stop`], the stop signal fires, or a read error occurs.
+async fn follow_file<F>(
+    path: PathBuf,
+    mut stop: tokio::sync::watch::Receiver<bool>,
+    mut on_line: F,
+) where
+    F: FnMut(&str) -> LineAction,
 {
     // Phase A: wait for the file to appear.
     let file = loop {
         if *stop.borrow() {
             return;
         }
-        match tokio::fs::File::open(&events_path).await {
+        match tokio::fs::File::open(&path).await {
             Ok(f) => break f,
             Err(_) => {
                 if wait_or_stop(&mut stop).await {
@@ -464,10 +592,7 @@ pub async fn tail_events<F>(
             Ok(0) => {
                 // EOF: no more bytes yet. Wait, then retry from the same
                 // position (BufReader preserves its offset across read_line).
-                if *stop.borrow() {
-                    return;
-                }
-                if wait_or_stop(&mut stop).await {
+                if *stop.borrow() || wait_or_stop(&mut stop).await {
                     return;
                 }
             }
@@ -478,12 +603,8 @@ pub async fn tail_events<F>(
                     continue;
                 }
                 let line = std::mem::take(&mut pending);
-                if let Some(update) = map_event_line(&line) {
-                    let terminal = matches!(update, WorkflowProgress::Finalized { .. });
-                    emit(update);
-                    if terminal {
-                        return;
-                    }
+                if matches!(on_line(&line), LineAction::Stop) {
+                    return;
                 }
             }
             Err(_) => return,
@@ -723,6 +844,66 @@ mod tests {
         assert!(map_event_line("   ").is_none());
         assert!(map_event_line("not json").is_none());
         assert!(map_event_line("{ partial").is_none());
+    }
+
+    #[test]
+    fn map_agent_stream_tool_use() {
+        let line = r#"{"ts":1,"action_id":"act_1","agent_name":"aog-kernel-worker",
+            "tool_call_id":"tc_9","kind":"tool_use","name":"Bash"}"#;
+        let e = map_agent_stream_line(line).expect("tool_use maps");
+        assert_eq!(e.action_id, "act_1");
+        assert_eq!(e.agent_name, "aog-kernel-worker");
+        assert_eq!(e.tool_call_id, "tc_9");
+        assert_eq!(e.phase, SubagentPhase::ToolUse);
+        assert_eq!(e.name, "Bash");
+        assert!(e.status.is_none());
+    }
+
+    #[test]
+    fn map_agent_stream_tool_result_with_status() {
+        let line = r#"{"ts":2,"action_id":"act_1","agent_name":"w","tool_call_id":"tc_9",
+            "kind":"tool_result","name":"Bash","status":"ok"}"#;
+        let e = map_agent_stream_line(line).expect("tool_result maps");
+        assert_eq!(e.phase, SubagentPhase::ToolResult);
+        assert_eq!(e.status.as_deref(), Some("ok"));
+    }
+
+    #[test]
+    fn map_agent_stream_rejects_unknown_kind_and_missing_action_id() {
+        assert!(
+            map_agent_stream_line(r#"{"action_id":"a","kind":"thinking","name":"x"}"#).is_none()
+        );
+        assert!(map_agent_stream_line(r#"{"kind":"tool_use","name":"Bash"}"#).is_none());
+        assert!(map_agent_stream_line("").is_none());
+        assert!(map_agent_stream_line("{bad").is_none());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn tail_agent_stream_is_noop_when_file_absent_then_stops() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let dir =
+                    std::env::temp_dir().join(format!("wf_substream_{}", std::process::id()));
+                let _ = tokio::fs::remove_dir_all(&dir).await;
+                let stream = dir.join("agent_stream.jsonl"); // never created
+
+                let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
+                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+                let handle = tokio::task::spawn_local(async move {
+                    tail_agent_stream(stream, stop_rx, move |e| {
+                        let _ = tx.send(e);
+                    })
+                    .await;
+                });
+                tokio::time::sleep(Duration::from_millis(60)).await;
+                // No file => no events emitted.
+                assert!(rx.try_recv().is_err());
+                stop_tx.send(true).unwrap();
+                let res = tokio::time::timeout(Duration::from_secs(2), handle).await;
+                assert!(res.is_ok(), "agent_stream tail did not stop on signal");
+            })
+            .await;
     }
 
     #[tokio::test(flavor = "current_thread")]
