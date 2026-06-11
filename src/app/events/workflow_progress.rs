@@ -11,11 +11,10 @@
 //! - [`apply_workflow_progress`]: routes one such update onto the tool call's
 //!   child rows and marks it for redraw.
 
-use std::path::PathBuf;
 
 use crate::agent::events::ClientEvent;
 use crate::agent::workflow_tail::{
-    self, ActionStatus, FinalizeKind, RunTarget, SubagentPhase, SubagentToolEvent, WorkflowProgress,
+    self, ActionStatus, FinalizeKind, SubagentPhase, SubagentToolEvent, WorkflowProgress,
 };
 use crate::app::{
     App, MessageBlock, ToolCallInfo, WorkflowActionCompletion, WorkflowActionRow,
@@ -57,9 +56,21 @@ pub(super) fn maybe_start_workflow_tail(app: &mut App, tool_call_id: &str) {
         return;
     };
 
-    // Resolve the events file. With an explicit --run-id we know it exactly;
-    // otherwise watch the cwd for the newest dir created after launch.
-    let events_path = resolve_events_path(&target);
+    // Live progress needs a deterministic run dir, i.e. an explicit --run-id
+    // (the workflow command templates always pass one). Without it we cannot
+    // know which <cwd>/<run-id>/events.jsonl to tail — tailing <cwd>/events.jsonl
+    // would wait forever on a file that never appears — so skip live progress
+    // and let the Bash call render its normal output.
+    if target.run_id.is_none() {
+        tracing::debug!(
+            target: crate::logging::targets::APP_COMMAND,
+            event_name = "workflow_tail_skipped_no_run_id",
+            message = "lingxi-ascendc run without --run-id; skipping live progress",
+            outcome = "skip",
+        );
+        return;
+    }
+    let events_path = target.events_path();
 
     let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
     // Attach state to the tool call so the render path can show child rows.
@@ -113,15 +124,6 @@ pub(super) fn maybe_start_workflow_tail(app: &mut App, tool_call_id: &str) {
         })
         .await;
     });
-}
-
-/// Resolve the events.jsonl path for a [`RunTarget`]. When the run id is
-/// explicit the path is known; otherwise we fall back to the cwd-level
-/// `events.jsonl` (the engine writes one per run dir, and the newest-dir
-/// resolution is a best-effort future enhancement — until then an explicit
-/// `--run-id`, which op-gen always passes, gives the precise path).
-fn resolve_events_path(target: &RunTarget) -> PathBuf {
-    target.events_path()
 }
 
 /// Pull the shell command for a tool call: prefer the captured terminal
