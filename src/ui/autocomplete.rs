@@ -14,7 +14,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 use unicode_width::UnicodeWidthChar;
 
 /// Max dropdown width (characters).
-const MAX_WIDTH: u16 = 60;
+const MAX_WIDTH: u16 = 120;
 /// Min dropdown width so list entries stay readable.
 const MIN_WIDTH: u16 = 20;
 /// Vertical gap (in rows) between the trigger line and the dropdown.
@@ -498,7 +498,7 @@ mod tests {
     #[test]
     fn dropdown_keeps_preferred_width_and_shifts_left_near_right_edge() {
         let (x, width) = choose_dropdown_x(78, 0, 80, 80);
-        assert_eq!((x, width), (20, 60));
+        assert_eq!((x, width), (0, 80));
     }
 
     #[test]
@@ -509,8 +509,8 @@ mod tests {
 
     #[test]
     fn dropdown_keeps_anchor_when_room_is_available() {
-        let (x, width) = choose_dropdown_x(12, 0, 80, 80);
-        assert_eq!((x, width), (12, 60));
+        let (x, width) = choose_dropdown_x(12, 0, 200, 200);
+        assert_eq!((x, width), (12, 120));
     }
 
     #[test]

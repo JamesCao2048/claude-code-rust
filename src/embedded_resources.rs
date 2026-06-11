@@ -211,16 +211,16 @@ mod tests {
     fn list_embedded_commands_returns_packaged_slash_commands() {
         let commands = list_embedded_commands();
         let names: Vec<&str> = commands.iter().map(|c| c.name.as_str()).collect();
-        assert!(names.contains(&"gen-tilelang"), "missing gen-tilelang: {names:?}");
-        assert!(names.contains(&"gen-ascendc"), "missing gen-ascendc: {names:?}");
-        assert!(names.contains(&"verify-env"), "missing verify-env: {names:?}");
+        for expected in ["generate", "debug", "optimize", "research", "verify-env"] {
+            assert!(names.contains(&expected), "missing {expected}: {names:?}");
+        }
         // Sorted output keeps the welcome banner stable across rebuilds.
         let mut sorted = names.clone();
         sorted.sort_unstable();
         assert_eq!(names, sorted);
-        let gen_til = commands.iter().find(|c| c.name == "gen-tilelang").unwrap();
-        assert!(!gen_til.description.is_empty(), "description missing for gen-tilelang");
-        assert!(!gen_til.argument_hint.is_empty(), "argument-hint missing for gen-tilelang");
+        let generate = commands.iter().find(|c| c.name == "generate").unwrap();
+        assert!(!generate.description.is_empty(), "description missing for generate");
+        assert!(!generate.argument_hint.is_empty(), "argument-hint missing for generate");
     }
 
     #[test]
