@@ -114,6 +114,13 @@ pub enum ClientEvent {
     PluginsCliActionFailed { cwd_raw: String, message: String },
     /// Fatal app error that should terminate and map to an exit code.
     FatalError(AppError),
+    /// Live workflow progress for a `lingxi-ascendc run` Bash tool call,
+    /// emitted by the events.jsonl tail task and routed to the tool call's
+    /// child rows.
+    WorkflowProgress {
+        tool_call_id: String,
+        update: crate::agent::workflow_tail::WorkflowProgress,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

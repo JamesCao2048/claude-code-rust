@@ -49,6 +49,78 @@ pub struct ToolCallInfo {
     pub pending_permission: Option<InlinePermission>,
     /// Inline question prompt from `AskUserQuestion`.
     pub pending_question: Option<InlineQuestion>,
+    /// Live workflow progress for a `lingxi-ascendc run` Bash call. Populated
+    /// by a tail task reading the run's `events.jsonl`; rendered as child rows
+    /// in place of the raw subprocess stdout (which only arrives on exit).
+    pub workflow_progress: Option<WorkflowProgressState>,
+}
+
+/// Per-tool-call live progress for a `lingxi-ascendc run` invocation.
+pub struct WorkflowProgressState {
+    /// Workflow name from the `run_started` event, once seen.
+    pub workflow: Option<String>,
+    /// Ordered child rows, one per engine action, keyed by `action_id` for
+    /// in-place completion updates.
+    pub actions: Vec<WorkflowActionRow>,
+    /// Terminal summary line, set on `workflow_done`/`workflow_aborted`/
+    /// `workflow_escalated`. When present the block collapses to this line.
+    pub finalized: Option<WorkflowFinalizeRow>,
+    /// Stop signal for the tail task. Dropping/sending stops the tail (e.g.
+    /// when the tool call fails before a terminal workflow event arrives).
+    pub stop: Option<tokio::sync::watch::Sender<bool>>,
+}
+
+impl WorkflowProgressState {
+    #[must_use]
+    pub fn new(stop: tokio::sync::watch::Sender<bool>) -> Self {
+        Self { workflow: None, actions: Vec::new(), finalized: None, stop: Some(stop) }
+    }
+
+    /// Signal the tail task to stop, if still running.
+    pub fn stop_tail(&mut self) {
+        if let Some(stop) = self.stop.take() {
+            let _ = stop.send(true);
+        }
+    }
+}
+
+/// One action row under a workflow progress block.
+pub struct WorkflowActionRow {
+    pub action_id: String,
+    /// Action kind label, e.g. `spawn_agent` / `run_workflow` / `verify`.
+    pub kind: String,
+    /// Action name, e.g. the agent name or nested workflow name.
+    pub name: String,
+    /// `None` while running; `Some` once completed.
+    pub completed: Option<WorkflowActionCompletion>,
+}
+
+/// Completion state for an action row.
+pub struct WorkflowActionCompletion {
+    pub status: WorkflowActionStatus,
+    pub outcome: String,
+}
+
+/// Coarse status of a completed action (for coloring).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkflowActionStatus {
+    Ok,
+    Retry,
+    Fail,
+}
+
+/// Terminal summary row for a finalized workflow.
+pub struct WorkflowFinalizeRow {
+    pub kind: WorkflowFinalizeKind,
+    pub summary: String,
+}
+
+/// Terminal workflow outcome class (for coloring).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkflowFinalizeKind {
+    Done,
+    Aborted,
+    Escalated,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

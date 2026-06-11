@@ -62,7 +62,9 @@ pub use state::{
     SessionPickerState, SessionUsageState, SystemSeverity, TerminalSnapshotMode, TextBlock,
     TextBlockSpacing, TodoItem, TodoStatus, ToolCallInfo, ToolCallScope, TurnNoticeLocation,
     TurnNoticeRef, UpdateNoticeState, UsageSnapshot, UsageSourceKind, UsageSourceMode, UsageState,
-    UsageWindow, WelcomeBlock, compute_scrollbar_geometry, hash_text_block_content,
+    UsageWindow, WelcomeBlock, WorkflowActionCompletion, WorkflowActionRow, WorkflowActionStatus,
+    WorkflowFinalizeKind, WorkflowFinalizeRow, WorkflowProgressState, compute_scrollbar_geometry,
+    hash_text_block_content,
     hash_welcome_block_content, is_execute_tool_name,
 };
 pub use trust::TrustSelection;
