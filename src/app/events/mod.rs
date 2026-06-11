@@ -12,6 +12,7 @@ mod streaming;
 mod tool_calls;
 mod tool_updates;
 mod turn;
+pub mod workflow_progress;
 
 use super::{
     ActiveView, App, AppStatus, ChatMessage, InvalidationLevel, MessageBlock, MessageRole,
@@ -492,6 +493,7 @@ mod tests {
             cache: BlockCache::default(),
             pending_permission: None,
             pending_question: None,
+            workflow_progress: None,
         }
     }
 

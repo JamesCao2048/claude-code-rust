@@ -719,6 +719,7 @@ mod tests {
             cache: BlockCache::default(),
             pending_permission: None,
             pending_question: None,
+            workflow_progress: None,
         }
     }
 
@@ -753,6 +754,7 @@ mod tests {
             cache: BlockCache::default(),
             pending_permission: None,
             pending_question: None,
+            workflow_progress: None,
         }
     }
 

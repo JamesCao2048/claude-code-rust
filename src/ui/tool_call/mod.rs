@@ -382,6 +382,7 @@ mod tests {
             cache: BlockCache::default(),
             pending_permission: None,
             pending_question: None,
+            workflow_progress: None,
         }
     }
 
@@ -544,6 +545,7 @@ mod tests {
             cache: BlockCache::default(),
             pending_permission: None,
             pending_question: None,
+            workflow_progress: None,
         };
 
         let rendered =
@@ -1036,6 +1038,7 @@ mod tests {
             cache: BlockCache::default(),
             pending_permission: None,
             pending_question: None,
+            workflow_progress: None,
         };
         assert_eq!(content_summary(&tc), "done");
     }
@@ -1068,6 +1071,7 @@ mod tests {
             cache: BlockCache::default(),
             pending_permission: None,
             pending_question: None,
+            workflow_progress: None,
         };
         assert_eq!(content_summary(&tc), "bad");
     }
@@ -1102,6 +1106,7 @@ mod tests {
             cache: BlockCache::default(),
             pending_permission: None,
             pending_question: None,
+            workflow_progress: None,
         };
         assert_eq!(content_summary(&tc), "Exit code 1");
     }
@@ -1156,6 +1161,7 @@ mod tests {
             cache: BlockCache::default(),
             pending_permission: None,
             pending_question: None,
+            workflow_progress: None,
         };
 
         let lines = execute::render_execute_content(&tc);

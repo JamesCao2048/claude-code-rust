@@ -24,7 +24,12 @@ pub(super) fn handle_tool_call(app: &mut App, tc: model::ToolCall) {
     if should_jump_on_large_write(&tool_info) {
         app.viewport.engage_auto_scroll();
     }
+    let tool_call_id = tool_info.id.clone();
     upsert_tool_call_into_assistant_message(app, tool_info);
+
+    // If this Bash call launches `lingxi-ascendc run`, begin tailing its
+    // events.jsonl so progress streams live instead of arriving only on exit.
+    super::workflow_progress::maybe_start_workflow_tail(app, &tool_call_id);
 
     app.status = AppStatus::Running;
     app.files_accessed += 1;
@@ -193,6 +198,7 @@ fn build_tool_info_from_tool_call(
         cache: BlockCache::default(),
         pending_permission: None,
         pending_question: None,
+        workflow_progress: None,
     };
     tool_info.raw_input_bytes =
         tool_info.raw_input.as_ref().map_or(0, ToolCallInfo::estimate_json_value_bytes);

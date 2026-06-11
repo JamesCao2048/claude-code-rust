@@ -465,6 +465,7 @@ mod tests {
             cache: crate::app::BlockCache::default(),
             pending_permission: None,
             pending_question: None,
+            workflow_progress: None,
         }
     }
 

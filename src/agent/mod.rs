@@ -8,3 +8,4 @@ pub mod events;
 pub mod model;
 pub mod types;
 pub mod wire;
+pub mod workflow_tail;

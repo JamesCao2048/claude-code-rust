@@ -518,6 +518,7 @@ mod tests {
                     focused: true,
                 }),
                 pending_question: None,
+                workflow_progress: None,
             }))],
             None,
         ));

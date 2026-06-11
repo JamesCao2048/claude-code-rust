@@ -21,7 +21,9 @@ pub use messages::{
     TextBlockSpacing, WelcomeBlock, hash_text_block_content, hash_welcome_block_content,
 };
 pub use tool_call_info::{
-    InlinePermission, InlineQuestion, TerminalSnapshotMode, ToolCallInfo, is_execute_tool_name,
+    InlinePermission, InlineQuestion, TerminalSnapshotMode, ToolCallInfo, WorkflowActionCompletion,
+    WorkflowActionRow, WorkflowActionStatus, WorkflowFinalizeKind, WorkflowFinalizeRow,
+    WorkflowProgressState, WorkflowSubagentToolRow, is_execute_tool_name,
 };
 pub use types::{
     AppStatus, CancelOrigin, ExtraUsage, HelpView, HistoryRetentionPolicy, HistoryRetentionStats,
@@ -1562,6 +1564,7 @@ mod tests {
                 cache: BlockCache::default(),
                 pending_permission: None,
                 pending_question: None,
+                workflow_progress: None,
             }))],
             None,
         )
@@ -1600,6 +1603,7 @@ mod tests {
                 cache: BlockCache::default(),
                 pending_permission: None,
                 pending_question: None,
+                workflow_progress: None,
             }))],
             None,
         )
@@ -1645,6 +1649,7 @@ mod tests {
                     focused: false,
                 }),
                 pending_question: None,
+                workflow_progress: None,
             }))],
             None,
         )
