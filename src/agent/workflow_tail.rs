@@ -192,8 +192,10 @@ fn shell_split(command: &str) -> Vec<String> {
 /// these onto child rows attached to the originating Bash tool call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkflowProgress {
-    /// `run_started`: workflow name + the cwd the engine recorded.
-    Started { workflow: String },
+    /// `run_started`: workflow name, the ordered header `params` (key/value
+    /// pairs the engine emits for the header line), and the `verbose` flag
+    /// (gates nested subagent tool rows; default false).
+    Started { workflow: String, params: Vec<(String, String)>, verbose: bool },
     /// `action_started`: an action (agent spawn / nested workflow / verify)
     /// began. `action_id` keys later updates; `kind`/`name` label the row.
     ActionStarted { action_id: String, kind: String, name: String },
@@ -228,7 +230,7 @@ pub enum FinalizeKind {
 /// The engine does not emit this file today; the tail is schema-ready and a
 /// silent no-op while the file is absent. Schema:
 /// `{ts, action_id, agent_name, tool_call_id, kind:"tool_use"|"tool_result",
-/// name, status}`.
+/// name, detail?, status?}`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubagentToolEvent {
     /// Parent action this subagent belongs to (matches an `action_started`
@@ -242,6 +244,10 @@ pub struct SubagentToolEvent {
     pub phase: SubagentPhase,
     /// Tool name (e.g. `Bash`, `Edit`).
     pub name: String,
+    /// Short a5_ops-style label derived by the engine from the tool input
+    /// (Bash description, file basename, grep pattern, skill/subagent name,
+    /// url). Carried on `tool_use`; empty/absent renders just the name.
+    pub detail: Option<String>,
     /// Optional status string carried on a `tool_result`.
     pub status: Option<String>,
 }
@@ -263,6 +269,13 @@ enum RawEvent {
     RunStarted {
         #[serde(default)]
         workflow: String,
+        /// Ordered header params. Insertion order is preserved by
+        /// [`OrderedParams`]'s visitor (the default `serde_json::Map` is a
+        /// `BTreeMap` and would re-sort keys alphabetically).
+        #[serde(default)]
+        params: OrderedParams,
+        #[serde(default)]
+        verbose: bool,
     },
     #[serde(rename = "action_started")]
     ActionStarted {
@@ -317,6 +330,58 @@ struct RawAction {
     name: String,
 }
 
+/// Ordered key/value header params parsed from `run_started.params`. The JSON
+/// object's entries are visited in document order and pushed into a `Vec`, so
+/// the engine-emitted order is preserved (unlike `serde_json::Map`, a sorted
+/// `BTreeMap` by default). Scalar values (string/number/bool) are stringified;
+/// the contract is short strings, but coercing keeps the tail forgiving.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct OrderedParams(Vec<(String, String)>);
+
+impl<'de> serde::Deserialize<'de> for OrderedParams {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct ParamsVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for ParamsVisitor {
+            type Value = OrderedParams;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("an object of header params")
+            }
+
+            fn visit_map<M>(self, mut map: M) -> Result<OrderedParams, M::Error>
+            where
+                M: serde::de::MapAccess<'de>,
+            {
+                let mut out = Vec::new();
+                while let Some((k, v)) = map.next_entry::<String, serde_json::Value>()? {
+                    if let Some(s) = scalar_to_string(&v) {
+                        out.push((k, s));
+                    }
+                }
+                Ok(OrderedParams(out))
+            }
+        }
+
+        deserializer.deserialize_map(ParamsVisitor)
+    }
+}
+
+/// Stringify a scalar JSON value for a header param; non-scalars (array/object/
+/// null) are dropped (return `None`) so only short displayable values land in
+/// the header.
+fn scalar_to_string(v: &serde_json::Value) -> Option<String> {
+    match v {
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        serde_json::Value::Bool(b) => Some(b.to_string()),
+        _ => None,
+    }
+}
+
 /// Raw subagent tool event line from `agent_stream.jsonl` (Phase 2).
 #[derive(Debug, Deserialize)]
 struct RawSubagentEvent {
@@ -330,6 +395,8 @@ struct RawSubagentEvent {
     kind: String,
     #[serde(default)]
     name: String,
+    #[serde(default)]
+    detail: Option<String>,
     #[serde(default)]
     status: Option<String>,
 }
@@ -370,13 +437,16 @@ pub fn map_agent_stream_line(line: &str) -> Option<SubagentToolEvent> {
         tool_call_id: raw.tool_call_id,
         phase,
         name: raw.name,
+        detail: raw.detail.filter(|s| !s.is_empty()),
         status: raw.status.filter(|s| !s.is_empty()),
     })
 }
 
 fn map_event(event: RawEvent) -> Option<WorkflowProgress> {
     match event {
-        RawEvent::RunStarted { workflow } => Some(WorkflowProgress::Started { workflow }),
+        RawEvent::RunStarted { workflow, params, verbose } => {
+            Some(WorkflowProgress::Started { workflow, params: params.0, verbose })
+        }
         RawEvent::ActionStarted { action_id, action } => Some(WorkflowProgress::ActionStarted {
             action_id,
             kind: action.kind,
@@ -708,7 +778,61 @@ mod tests {
     fn map_run_started() {
         let u = map_event_line(r#"{"type":"run_started","workflow":"gen","cwd":"/x","seq":1}"#)
             .expect("run_started maps");
-        assert_eq!(u, WorkflowProgress::Started { workflow: "gen".to_owned() });
+        // No params/verbose present -> defaults (empty params, verbose false).
+        assert_eq!(
+            u,
+            WorkflowProgress::Started {
+                workflow: "gen".to_owned(),
+                params: Vec::new(),
+                verbose: false,
+            }
+        );
+    }
+
+    #[test]
+    fn map_run_started_parses_params_in_order_and_verbose() {
+        // Keys intentionally NOT alphabetical: op, via, run_mode, model. A
+        // BTreeMap would resort them; the visitor must preserve emit order.
+        let line = r#"{"type":"run_started","workflow":"generate_ascendc",
+            "params":{"op":"3_Add","via":"cannbot","run_mode":"user","model":"model.py"},
+            "verbose":true}"#;
+        match map_event_line(line).expect("run_started maps") {
+            WorkflowProgress::Started { workflow, params, verbose } => {
+                assert_eq!(workflow, "generate_ascendc");
+                assert!(verbose);
+                assert_eq!(
+                    params,
+                    vec![
+                        ("op".to_owned(), "3_Add".to_owned()),
+                        ("via".to_owned(), "cannbot".to_owned()),
+                        ("run_mode".to_owned(), "user".to_owned()),
+                        ("model".to_owned(), "model.py".to_owned()),
+                    ]
+                );
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn map_run_started_coerces_scalar_param_values_and_drops_nonscalars() {
+        let line = r#"{"type":"run_started","workflow":"gen",
+            "params":{"op":"5_Mul","retries":3,"deep":false,"junk":[1,2],"nil":null}}"#;
+        match map_event_line(line).expect("maps") {
+            WorkflowProgress::Started { params, verbose, .. } => {
+                assert!(!verbose, "verbose defaults to false when absent");
+                // Scalars stringified, in order; array/null dropped.
+                assert_eq!(
+                    params,
+                    vec![
+                        ("op".to_owned(), "5_Mul".to_owned()),
+                        ("retries".to_owned(), "3".to_owned()),
+                        ("deep".to_owned(), "false".to_owned()),
+                    ]
+                );
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
     }
 
     #[test]
@@ -856,7 +980,24 @@ mod tests {
         assert_eq!(e.tool_call_id, "tc_9");
         assert_eq!(e.phase, SubagentPhase::ToolUse);
         assert_eq!(e.name, "Bash");
+        assert!(e.detail.is_none());
         assert!(e.status.is_none());
+    }
+
+    #[test]
+    fn map_agent_stream_tool_use_carries_detail() {
+        let line = r#"{"ts":1,"action_id":"act_1","agent_name":"w","tool_call_id":"tc_9",
+            "kind":"tool_use","name":"Bash","detail":"deploy + build kernel"}"#;
+        let e = map_agent_stream_line(line).expect("tool_use maps");
+        assert_eq!(e.detail.as_deref(), Some("deploy + build kernel"));
+    }
+
+    #[test]
+    fn map_agent_stream_empty_detail_becomes_none() {
+        let line = r#"{"ts":1,"action_id":"act_1","agent_name":"w","tool_call_id":"tc_9",
+            "kind":"tool_use","name":"Read","detail":""}"#;
+        let e = map_agent_stream_line(line).expect("tool_use maps");
+        assert!(e.detail.is_none(), "empty detail should normalize to None");
     }
 
     #[test]

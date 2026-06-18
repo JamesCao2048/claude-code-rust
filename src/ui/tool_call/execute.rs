@@ -178,43 +178,67 @@ pub(super) fn render_workflow_progress(progress: &WorkflowProgressState) -> Vec<
             WorkflowFinalizeKind::Aborted => ("\u{2717}", theme::STATUS_ERROR),
             WorkflowFinalizeKind::Escalated => ("\u{26a0}", theme::STATUS_WARNING),
         };
-        lines.push(Line::from(vec![
+        let mut header = vec![
             Span::styled(format!("{glyph} "), Style::default().fg(color)),
             Span::styled(
                 format!("{workflow} "),
                 Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
             ),
-            Span::styled(fin.summary.clone(), Style::default().fg(color)),
-        ]));
+        ];
+        if let Some(params) = params_span(&progress.params) {
+            header.push(params);
+        }
+        header.push(Span::styled(fin.summary.clone(), Style::default().fg(color)));
+        lines.push(Line::from(header));
         // Keep per-action rows visible under the summary so the breakdown that
-        // led to the outcome is not lost.
+        // led to the outcome is not lost. Nested subagent tool rows only when
+        // verbose, same gating as the running path.
         for row in &progress.actions {
-            lines.push(render_action_row(row));
+            push_action_row(&mut lines, row, progress.verbose);
         }
         return lines;
     }
 
-    lines.push(Line::from(vec![
-        Span::styled(
-            format!("\u{25b8} {workflow} "),
-            Style::default().fg(theme::RUST_ORANGE).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled("running", Style::default().fg(theme::DIM)),
-    ]));
+    let mut header = vec![Span::styled(
+        format!("\u{25b8} {workflow} "),
+        Style::default().fg(theme::RUST_ORANGE).add_modifier(Modifier::BOLD),
+    )];
+    if let Some(params) = params_span(&progress.params) {
+        header.push(params);
+    }
+    header.push(Span::styled("running", Style::default().fg(theme::DIM)));
+    lines.push(Line::from(header));
     for row in &progress.actions {
-        push_action_row(&mut lines, row);
+        push_action_row(&mut lines, row, progress.verbose);
     }
     lines
+}
+
+/// Render the ordered header params as a single dim ` k=v k=v ` span, or `None`
+/// when there are no params. Trailing space separates it from the `running`
+/// marker that follows.
+fn params_span(params: &[(String, String)]) -> Option<Span<'static>> {
+    if params.is_empty() {
+        return None;
+    }
+    let text =
+        params.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(" ");
+    Some(Span::styled(format!("{text}  "), Style::default().fg(theme::DIM)))
 }
 
 /// Max nested subagent rows shown per action (Phase 2), to keep the box bounded.
 const MAX_SUBAGENT_ROWS: usize = 6;
 
-/// Append an action row plus its nested subagent tool rows (Phase 2).
-fn push_action_row(lines: &mut Vec<Line<'static>>, row: &crate::app::WorkflowActionRow) {
+/// Append an action row plus, when `verbose`, its nested subagent tool rows.
+/// Default (non-verbose) shows only the action row; the nested Bash/Read/...
+/// rows from `agent_stream.jsonl` render only under `-v`/`--verbose`.
+fn push_action_row(lines: &mut Vec<Line<'static>>, row: &crate::app::WorkflowActionRow, verbose: bool) {
     lines.push(render_action_row(row));
+    if !verbose {
+        return;
+    }
     // Nested subagent tool calls (from agent_stream.jsonl). Indented one level
-    // under the action. Absent for current runs (engine emits no stream yet).
+    // under the action.
     let total = row.subagent_tools.len();
     let shown = total.min(MAX_SUBAGENT_ROWS);
     if total > MAX_SUBAGENT_ROWS {
@@ -258,11 +282,11 @@ fn render_action_row(row: &crate::app::WorkflowActionRow) -> Line<'static> {
 }
 
 fn render_subagent_row(sub: &crate::app::WorkflowSubagentToolRow) -> Line<'static> {
-    let name = if sub.name.is_empty() { "tool" } else { sub.name.as_str() };
+    let label = subagent_label(&sub.name, sub.detail.as_deref());
     if sub.completed {
         let mut spans = vec![
             Span::styled("      \u{2713} ", Style::default().fg(Color::Green)),
-            Span::styled(name.to_owned(), Style::default().fg(theme::DIM)),
+            Span::styled(label, Style::default().fg(theme::DIM)),
         ];
         if let Some(status) = sub.status.as_deref().filter(|s| !s.is_empty()) {
             spans.push(Span::styled(
@@ -274,8 +298,18 @@ fn render_subagent_row(sub: &crate::app::WorkflowSubagentToolRow) -> Line<'stati
     } else {
         Line::from(vec![
             Span::styled("      \u{2219} ", Style::default().fg(theme::DIM)),
-            Span::styled(name.to_owned(), Style::default().fg(theme::DIM)),
+            Span::styled(label, Style::default().fg(theme::DIM)),
         ])
+    }
+}
+
+/// Compose a subagent tool-row label: `"<name>: <detail>"`, or just `"<name>"`
+/// when the detail is empty/None. Falls back to `"tool"` for an empty name.
+fn subagent_label(name: &str, detail: Option<&str>) -> String {
+    let name = if name.is_empty() { "tool" } else { name };
+    match detail.map(str::trim).filter(|d| !d.is_empty()) {
+        Some(detail) => format!("{name}: {detail}"),
+        None => name.to_owned(),
     }
 }
 
@@ -409,11 +443,8 @@ mod tests {
         assert!(joined.contains("spawn_agent: w"), "action kept:\n{joined}");
     }
 
-    #[test]
-    fn nested_subagent_tool_rows_render_under_action() {
-        let mut s = state();
-        s.workflow = Some("gen".to_owned());
-        s.actions.push(WorkflowActionRow {
+    fn action_with_subtools() -> WorkflowActionRow {
+        WorkflowActionRow {
             action_id: "a1".to_owned(),
             kind: "spawn_agent".to_owned(),
             name: "worker".to_owned(),
@@ -421,23 +452,91 @@ mod tests {
             subagent_tools: vec![
                 WorkflowSubagentToolRow {
                     tool_call_id: "t1".to_owned(),
-                    name: "Edit".to_owned(),
+                    name: "Read".to_owned(),
+                    detail: Some("op_kernel.cpp".to_owned()),
                     completed: true,
                     status: Some("ok".to_owned()),
                 },
                 WorkflowSubagentToolRow {
                     tool_call_id: "t2".to_owned(),
                     name: "Bash".to_owned(),
+                    detail: Some("deploy + build kernel".to_owned()),
+                    completed: false,
+                    status: None,
+                },
+                WorkflowSubagentToolRow {
+                    tool_call_id: "t3".to_owned(),
+                    name: "Bash".to_owned(),
+                    detail: None,
                     completed: false,
                     status: None,
                 },
             ],
-        });
+        }
+    }
+
+    #[test]
+    fn nested_subagent_tool_rows_render_under_action_when_verbose() {
+        let mut s = state();
+        s.workflow = Some("gen".to_owned());
+        s.verbose = true;
+        s.actions.push(action_with_subtools());
 
         let tc = bash_with_progress(s);
         let joined = render_text(&render_execute_content(&tc)).join("\n");
         assert!(joined.contains("spawn_agent: worker"), "parent action:\n{joined}");
-        assert!(joined.contains("Edit"), "subagent tool 1:\n{joined}");
-        assert!(joined.contains("Bash"), "subagent tool 2:\n{joined}");
+        // "<name>: <detail>" rendering.
+        assert!(joined.contains("Read: op_kernel.cpp"), "subagent w/ detail:\n{joined}");
+        assert!(joined.contains("Bash: deploy + build kernel"), "bash detail:\n{joined}");
+        // detail None -> just the bare name.
+        assert!(joined.contains("\u{2219} Bash"), "bare name row:\n{joined}");
+    }
+
+    #[test]
+    fn nested_subagent_tool_rows_hidden_when_not_verbose() {
+        let mut s = state();
+        s.workflow = Some("gen".to_owned());
+        // verbose defaults to false.
+        s.actions.push(action_with_subtools());
+
+        let tc = bash_with_progress(s);
+        let joined = render_text(&render_execute_content(&tc)).join("\n");
+        // Action row still shows.
+        assert!(joined.contains("spawn_agent: worker"), "parent action:\n{joined}");
+        // Nested tool rows are suppressed by default.
+        assert!(!joined.contains("op_kernel.cpp"), "detail leaked:\n{joined}");
+        assert!(!joined.contains("deploy + build kernel"), "detail leaked:\n{joined}");
+    }
+
+    #[test]
+    fn header_renders_ordered_params_after_workflow_name() {
+        let mut s = state();
+        s.workflow = Some("generate_ascendc".to_owned());
+        s.params = vec![
+            ("op".to_owned(), "3_Add".to_owned()),
+            ("via".to_owned(), "cannbot".to_owned()),
+            ("run_mode".to_owned(), "user".to_owned()),
+        ];
+        s.actions.push(WorkflowActionRow {
+            action_id: "a1".to_owned(),
+            kind: "verify".to_owned(),
+            name: "verify".to_owned(),
+            completed: None,
+            subagent_tools: Vec::new(),
+        });
+
+        let tc = bash_with_progress(s);
+        let lines = render_text(&render_execute_content(&tc));
+        // Header line is the first workflow-progress line (after the $ cmd line).
+        let header = lines.iter().find(|l| l.contains("generate_ascendc")).expect("header");
+        assert!(header.contains("op=3_Add"), "param op:\n{header}");
+        assert!(header.contains("via=cannbot"), "param via:\n{header}");
+        assert!(header.contains("run_mode=user"), "param run_mode:\n{header}");
+        assert!(header.contains("running"), "running marker:\n{header}");
+        // Order: workflow name precedes params, params precede `running`.
+        let w = header.find("generate_ascendc").unwrap();
+        let p = header.find("op=3_Add").unwrap();
+        let r = header.find("running").unwrap();
+        assert!(w < p && p < r, "ordering wrong:\n{header}");
     }
 }

@@ -59,6 +59,13 @@ pub struct ToolCallInfo {
 pub struct WorkflowProgressState {
     /// Workflow name from the `run_started` event, once seen.
     pub workflow: Option<String>,
+    /// Ordered header key/value params from the `run_started` event (e.g.
+    /// `op`/`via`/`run_mode`/`model`). Rendered after the workflow name; order
+    /// is preserved as the engine emitted it.
+    pub params: Vec<(String, String)>,
+    /// Verbose flag from the `run_started` event. When false (default) the
+    /// nested subagent tool rows are hidden and only the action rows show.
+    pub verbose: bool,
     /// Ordered child rows, one per engine action, keyed by `action_id` for
     /// in-place completion updates.
     pub actions: Vec<WorkflowActionRow>,
@@ -73,7 +80,14 @@ pub struct WorkflowProgressState {
 impl WorkflowProgressState {
     #[must_use]
     pub fn new(stop: tokio::sync::watch::Sender<bool>) -> Self {
-        Self { workflow: None, actions: Vec::new(), finalized: None, stop: Some(stop) }
+        Self {
+            workflow: None,
+            params: Vec::new(),
+            verbose: false,
+            actions: Vec::new(),
+            finalized: None,
+            stop: Some(stop),
+        }
     }
 
     /// Signal the tail task to stop, if still running.
@@ -103,6 +117,9 @@ pub struct WorkflowSubagentToolRow {
     pub tool_call_id: String,
     /// Tool name (e.g. `Bash`, `Edit`).
     pub name: String,
+    /// Short a5_ops-style label for the tool input (e.g. a Bash description,
+    /// a file basename, a grep pattern). `None`/empty renders just the name.
+    pub detail: Option<String>,
     /// `false` until the matching `tool_result` arrives.
     pub completed: bool,
     /// Optional status string from the `tool_result`.

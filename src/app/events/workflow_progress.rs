@@ -214,6 +214,7 @@ fn apply_subagent_to_state(state: &mut WorkflowProgressState, event: &SubagentTo
             row.subagent_tools.push(WorkflowSubagentToolRow {
                 tool_call_id: event.tool_call_id.clone(),
                 name: event.name.clone(),
+                detail: event.detail.clone(),
                 completed: false,
                 status: None,
             });
@@ -230,6 +231,7 @@ fn apply_subagent_to_state(state: &mut WorkflowProgressState, event: &SubagentTo
                 row.subagent_tools.push(WorkflowSubagentToolRow {
                     tool_call_id: event.tool_call_id.clone(),
                     name: event.name.clone(),
+                    detail: event.detail.clone(),
                     completed: true,
                     status: event.status.clone(),
                 });
@@ -242,12 +244,16 @@ fn apply_subagent_to_state(state: &mut WorkflowProgressState, event: &SubagentTo
 /// Mutate `state` for one update. Returns whether anything visible changed.
 fn apply_to_state(state: &mut WorkflowProgressState, update: WorkflowProgress) -> bool {
     match update {
-        WorkflowProgress::Started { workflow } => {
+        WorkflowProgress::Started { workflow, params, verbose } => {
             let new = (!workflow.is_empty()).then_some(workflow);
-            if state.workflow == new {
+            let changed =
+                state.workflow != new || state.params != params || state.verbose != verbose;
+            if !changed {
                 return false;
             }
             state.workflow = new;
+            state.params = params;
+            state.verbose = verbose;
             true
         }
         WorkflowProgress::ActionStarted { action_id, kind, name } => {
@@ -317,13 +323,49 @@ mod tests {
         WorkflowProgressState::new(tx)
     }
 
+    fn started(workflow: &str) -> WorkflowProgress {
+        WorkflowProgress::Started { workflow: workflow.into(), params: Vec::new(), verbose: false }
+    }
+
     #[test]
     fn started_sets_workflow_once() {
         let mut s = empty_state();
-        assert!(apply_to_state(&mut s, WorkflowProgress::Started { workflow: "gen".into() }));
+        assert!(apply_to_state(&mut s, started("gen")));
         assert_eq!(s.workflow.as_deref(), Some("gen"));
         // Re-delivery of identical start is a no-op.
-        assert!(!apply_to_state(&mut s, WorkflowProgress::Started { workflow: "gen".into() }));
+        assert!(!apply_to_state(&mut s, started("gen")));
+    }
+
+    #[test]
+    fn started_stores_params_and_verbose() {
+        let mut s = empty_state();
+        assert!(!s.verbose);
+        assert!(s.params.is_empty());
+        let upd = WorkflowProgress::Started {
+            workflow: "generate_ascendc".into(),
+            params: vec![
+                ("op".into(), "3_Add".into()),
+                ("via".into(), "cannbot".into()),
+            ],
+            verbose: true,
+        };
+        assert!(apply_to_state(&mut s, upd));
+        assert_eq!(s.workflow.as_deref(), Some("generate_ascendc"));
+        assert!(s.verbose);
+        assert_eq!(
+            s.params,
+            vec![("op".to_owned(), "3_Add".to_owned()), ("via".to_owned(), "cannbot".to_owned())]
+        );
+        // Re-delivery of the identical Started is a no-op even with params.
+        let same = WorkflowProgress::Started {
+            workflow: "generate_ascendc".into(),
+            params: vec![
+                ("op".into(), "3_Add".into()),
+                ("via".into(), "cannbot".into()),
+            ],
+            verbose: true,
+        };
+        assert!(!apply_to_state(&mut s, same));
     }
 
     #[test]
@@ -404,6 +446,8 @@ mod tests {
             tool_call_id: tool_call_id.into(),
             phase,
             name: "Bash".into(),
+            detail: matches!(phase, SubagentPhase::ToolUse)
+                .then(|| "deploy + build kernel".to_owned()),
             status: matches!(phase, SubagentPhase::ToolResult).then(|| "ok".to_owned()),
         }
     }
@@ -415,6 +459,11 @@ mod tests {
         assert!(apply_subagent_to_state(&mut s, &sub_event("a1", "t1", SubagentPhase::ToolUse)));
         assert_eq!(s.actions[0].subagent_tools.len(), 1);
         assert!(!s.actions[0].subagent_tools[0].completed);
+        // detail from the tool_use is carried onto the row.
+        assert_eq!(
+            s.actions[0].subagent_tools[0].detail.as_deref(),
+            Some("deploy + build kernel")
+        );
 
         assert!(apply_subagent_to_state(&mut s, &sub_event("a1", "t1", SubagentPhase::ToolResult)));
         assert_eq!(s.actions[0].subagent_tools.len(), 1, "result updates in place");
