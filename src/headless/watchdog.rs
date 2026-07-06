@@ -28,11 +28,7 @@ pub enum WatchdogTick {
 impl Watchdog {
     pub fn new(idle: Duration, hard: Option<Duration>) -> Self {
         let now = Instant::now();
-        Self {
-            idle_window: idle,
-            last_activity: now,
-            hard_deadline: hard.map(|h| now + h),
-        }
+        Self { idle_window: idle, last_activity: now, hard_deadline: hard.map(|h| now + h) }
     }
 
     pub fn note_activity(&mut self) {

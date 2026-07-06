@@ -214,9 +214,9 @@ impl Cli {
     /// callers map to the default TUI behavior.
     pub fn resolve_command(&self) -> anyhow::Result<Command> {
         match (&self.command, &self.print) {
-            (Some(_), Some(_)) => anyhow::bail!(
-                "the argument '-p <PROMPT>' cannot be used with a subcommand"
-            ),
+            (Some(_), Some(_)) => {
+                anyhow::bail!("the argument '-p <PROMPT>' cannot be used with a subcommand")
+            }
             (Some(cmd), None) => Ok(cmd.clone()),
             (None, Some(prompt)) => Ok(Command::Print(PrintArgs {
                 prompt: Some(prompt.clone()),
@@ -332,8 +332,13 @@ mod tests {
     #[test]
     fn cli_print_text_format_and_max_turns() {
         let cli = Cli::try_parse_from([
-            "lingxi-ascendc", "print", "--output-format", "text",
-            "--max-turns", "5", "go",
+            "lingxi-ascendc",
+            "print",
+            "--output-format",
+            "text",
+            "--max-turns",
+            "5",
+            "go",
         ])
         .expect("parse");
         let Command::Print(args) = cli.resolve_command().expect("resolve") else { panic!() };
@@ -344,10 +349,9 @@ mod tests {
 
     #[test]
     fn cli_print_resume_and_continue_are_mutually_exclusive() {
-        let err = Cli::try_parse_from([
-            "lingxi-ascendc", "print", "--resume", "abc", "--continue", "hi",
-        ])
-        .expect_err("clap should reject");
+        let err =
+            Cli::try_parse_from(["lingxi-ascendc", "print", "--resume", "abc", "--continue", "hi"])
+                .expect_err("clap should reject");
         assert!(err.to_string().contains("cannot be used"), "actual: {err}");
     }
 
@@ -358,12 +362,9 @@ mod tests {
         // `resolve_command`. Verify the manual path actually triggers.
         let parsed = Cli::try_parse_from(["lingxi-ascendc", "-p", "hi", "resume"])
             .expect("parsing succeeds; rejection happens in resolve_command");
-        let err = parsed.resolve_command().expect_err(
-            "-p with another subcommand must fail in resolve_command",
-        );
-        assert!(
-            err.to_string().contains("cannot be used"),
-            "actual: {err}"
-        );
+        let err = parsed
+            .resolve_command()
+            .expect_err("-p with another subcommand must fail in resolve_command");
+        assert!(err.to_string().contains("cannot be used"), "actual: {err}");
     }
 }

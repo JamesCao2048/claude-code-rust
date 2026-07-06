@@ -141,11 +141,7 @@ pub fn list_embedded_commands() -> Vec<EmbeddedCommand> {
         };
         let Some(content) = file.contents_utf8() else { continue };
         let (description, argument_hint) = parse_command_frontmatter(content);
-        commands.push(EmbeddedCommand {
-            name: stem.to_owned(),
-            description,
-            argument_hint,
-        });
+        commands.push(EmbeddedCommand { name: stem.to_owned(), description, argument_hint });
     }
     commands.sort_by(|a, b| a.name.cmp(&b.name));
     commands

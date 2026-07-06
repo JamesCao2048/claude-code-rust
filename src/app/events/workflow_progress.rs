@@ -11,7 +11,6 @@
 //! - [`apply_workflow_progress`]: routes one such update onto the tool call's
 //!   child rows and marks it for redraw.
 
-
 use crate::agent::events::ClientEvent;
 use crate::agent::workflow_tail::{
     self, ActionStatus, FinalizeKind, SubagentPhase, SubagentToolEvent, WorkflowProgress,
@@ -35,8 +34,7 @@ pub(super) fn maybe_start_workflow_tail(app: &mut App, tool_call_id: &str) {
     };
     let cwd = app.cwd_raw.clone();
     let command = {
-        let Some(MessageBlock::ToolCall(tc)) =
-            app.messages.get(mi).and_then(|m| m.blocks.get(bi))
+        let Some(MessageBlock::ToolCall(tc)) = app.messages.get(mi).and_then(|m| m.blocks.get(bi))
         else {
             return;
         };
@@ -101,10 +99,8 @@ pub(super) fn maybe_start_workflow_tail(app: &mut App, tool_call_id: &str) {
     let stop_rx_events = stop_rx.clone();
     tokio::task::spawn_local(async move {
         workflow_tail::tail_events(events_path, stop_rx_events, move |update| {
-            let _ = event_tx.send(ClientEvent::WorkflowProgress {
-                tool_call_id: id.clone(),
-                update,
-            });
+            let _ =
+                event_tx.send(ClientEvent::WorkflowProgress { tool_call_id: id.clone(), update });
         })
         .await;
     });
@@ -117,10 +113,8 @@ pub(super) fn maybe_start_workflow_tail(app: &mut App, tool_call_id: &str) {
     let id2 = tool_call_id.to_owned();
     tokio::task::spawn_local(async move {
         workflow_tail::tail_agent_stream(stream_path, stop_rx, move |event| {
-            let _ = event_tx2.send(ClientEvent::WorkflowSubagentEvent {
-                tool_call_id: id2.clone(),
-                event,
-            });
+            let _ = event_tx2
+                .send(ClientEvent::WorkflowSubagentEvent { tool_call_id: id2.clone(), event });
         })
         .await;
     });
@@ -166,11 +160,7 @@ pub fn apply_workflow_progress(app: &mut App, tool_call_id: &str, update: Workfl
 
 /// Apply one subagent tool event (Phase 2) to the named tool call: nest it
 /// under the action row whose `action_id` matches.
-pub fn apply_workflow_subagent_event(
-    app: &mut App,
-    tool_call_id: &str,
-    event: &SubagentToolEvent,
-) {
+pub fn apply_workflow_subagent_event(app: &mut App, tool_call_id: &str, event: &SubagentToolEvent) {
     let Some((mi, bi)) = app.lookup_tool_call(tool_call_id) else {
         return;
     };
@@ -256,7 +246,7 @@ fn apply_to_state(state: &mut WorkflowProgressState, update: WorkflowProgress) -
             state.verbose = verbose;
             true
         }
-        WorkflowProgress::ActionStarted { action_id, kind, name } => {
+        WorkflowProgress::ActionStarted { action_id, kind, name, detail } => {
             if state.actions.iter().any(|a| a.action_id == action_id) {
                 return false; // dedup re-delivery
             }
@@ -264,17 +254,18 @@ fn apply_to_state(state: &mut WorkflowProgressState, update: WorkflowProgress) -
                 action_id,
                 kind,
                 name,
+                detail,
                 completed: None,
                 subagent_tools: Vec::new(),
             });
             true
         }
-        WorkflowProgress::ActionCompleted { action_id, status, outcome } => {
-            let completion = WorkflowActionCompletion {
-                status: map_status(status),
-                outcome,
-            };
+        WorkflowProgress::ActionCompleted { action_id, status, outcome, detail } => {
+            let completion = WorkflowActionCompletion { status: map_status(status), outcome };
             if let Some(row) = state.actions.iter_mut().find(|a| a.action_id == action_id) {
+                if row.detail.is_none() {
+                    row.detail = detail;
+                }
                 row.completed = Some(completion);
             } else {
                 // Completion without a prior start (e.g. tail attached late):
@@ -283,6 +274,7 @@ fn apply_to_state(state: &mut WorkflowProgressState, update: WorkflowProgress) -
                     action_id,
                     kind: String::new(),
                     name: String::new(),
+                    detail,
                     completed: Some(completion),
                     subagent_tools: Vec::new(),
                 });
@@ -343,10 +335,7 @@ mod tests {
         assert!(s.params.is_empty());
         let upd = WorkflowProgress::Started {
             workflow: "generate_ascendc".into(),
-            params: vec![
-                ("op".into(), "3_Add".into()),
-                ("via".into(), "cannbot".into()),
-            ],
+            params: vec![("op".into(), "3_Add".into()), ("via".into(), "cannbot".into())],
             verbose: true,
         };
         assert!(apply_to_state(&mut s, upd));
@@ -359,10 +348,7 @@ mod tests {
         // Re-delivery of the identical Started is a no-op even with params.
         let same = WorkflowProgress::Started {
             workflow: "generate_ascendc".into(),
-            params: vec![
-                ("op".into(), "3_Add".into()),
-                ("via".into(), "cannbot".into()),
-            ],
+            params: vec![("op".into(), "3_Add".into()), ("via".into(), "cannbot".into())],
             verbose: true,
         };
         assert!(!apply_to_state(&mut s, same));
@@ -377,9 +363,11 @@ mod tests {
                 action_id: "a1".into(),
                 kind: "spawn_agent".into(),
                 name: "worker".into(),
+                detail: Some("scope=full".into()),
             },
         );
         assert_eq!(s.actions.len(), 1);
+        assert_eq!(s.actions[0].detail.as_deref(), Some("scope=full"));
         assert!(s.actions[0].completed.is_none());
 
         apply_to_state(
@@ -388,6 +376,7 @@ mod tests {
                 action_id: "a1".into(),
                 status: ActionStatus::Ok,
                 outcome: "clean".into(),
+                detail: None,
             },
         );
         assert_eq!(s.actions.len(), 1, "completion updates in place");
@@ -403,6 +392,7 @@ mod tests {
             action_id: "a1".into(),
             kind: "verify".into(),
             name: "verify".into(),
+            detail: None,
         };
         assert!(apply_to_state(&mut s, mk()));
         assert!(!apply_to_state(&mut s, mk()));
@@ -418,14 +408,13 @@ mod tests {
                 action_id: "late".into(),
                 status: ActionStatus::Fail,
                 outcome: "boom".into(),
+                detail: Some("args:target=ascendc".into()),
             },
         );
         assert_eq!(s.actions.len(), 1);
         assert_eq!(s.actions[0].action_id, "late");
-        assert_eq!(
-            s.actions[0].completed.as_ref().unwrap().status,
-            WorkflowActionStatus::Fail
-        );
+        assert_eq!(s.actions[0].detail.as_deref(), Some("args:target=ascendc"));
+        assert_eq!(s.actions[0].completed.as_ref().unwrap().status, WorkflowActionStatus::Fail);
     }
 
     fn started_action(s: &mut WorkflowProgressState, id: &str) {
@@ -435,6 +424,7 @@ mod tests {
                 action_id: id.into(),
                 kind: "spawn_agent".into(),
                 name: "worker".into(),
+                detail: None,
             },
         );
     }
@@ -460,10 +450,7 @@ mod tests {
         assert_eq!(s.actions[0].subagent_tools.len(), 1);
         assert!(!s.actions[0].subagent_tools[0].completed);
         // detail from the tool_use is carried onto the row.
-        assert_eq!(
-            s.actions[0].subagent_tools[0].detail.as_deref(),
-            Some("deploy + build kernel")
-        );
+        assert_eq!(s.actions[0].subagent_tools[0].detail.as_deref(), Some("deploy + build kernel"));
 
         assert!(apply_subagent_to_state(&mut s, &sub_event("a1", "t1", SubagentPhase::ToolResult)));
         assert_eq!(s.actions[0].subagent_tools.len(), 1, "result updates in place");
@@ -501,10 +488,7 @@ mod tests {
         assert!(s.stop.is_some());
         apply_to_state(
             &mut s,
-            WorkflowProgress::Finalized {
-                kind: FinalizeKind::Done,
-                summary: "done (PASS)".into(),
-            },
+            WorkflowProgress::Finalized { kind: FinalizeKind::Done, summary: "done (PASS)".into() },
         );
         let fin = s.finalized.as_ref().unwrap();
         assert_eq!(fin.kind, WorkflowFinalizeKind::Done);

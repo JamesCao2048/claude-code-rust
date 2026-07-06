@@ -11,19 +11,20 @@ pub mod watchdog;
 
 use crate::agent::client::{BridgeClient, BridgeReader, BridgeWriter};
 use crate::agent::wire::{BridgeCommand, BridgeEvent, CommandEnvelope, SessionLaunchSettings};
-use std::collections::BTreeMap;
 use crate::headless::driver::{
-    HeadlessExit, PromptSource, ResolvedPermissionMode, classify_prompt, connect_phase,
-    init_phase, resolve_permission_mode, shutdown_phase, streaming_phase,
+    HeadlessExit, PromptSource, ResolvedPermissionMode, classify_prompt, connect_phase, init_phase,
+    resolve_permission_mode, shutdown_phase, streaming_phase,
 };
 use crate::headless::output::{Emitter, StreamJsonEmitter, TextEmitter};
 use crate::headless::watchdog::Watchdog;
 use crate::{CliPermissionMode, PrintArgs, PrintOutputFormat};
+use std::collections::BTreeMap;
 use std::io::{IsTerminal as _, Read as _};
 use std::path::Path;
 use std::time::Duration;
 
-const ENV_REQUIRE_EXPLICIT_PERMISSION_MODE: &str = "LINGXI_HEADLESS_REQUIRE_EXPLICIT_PERMISSION_MODE";
+const ENV_REQUIRE_EXPLICIT_PERMISSION_MODE: &str =
+    "LINGXI_HEADLESS_REQUIRE_EXPLICIT_PERMISSION_MODE";
 
 /// Run the headless `print` command end-to-end. Returns the process exit code.
 ///
@@ -39,9 +40,8 @@ pub async fn run_print(
     cli_permission_mode: Option<CliPermissionMode>,
     cli_dangerously_skip: bool,
 ) -> i32 {
-    let require_explicit = std::env::var(ENV_REQUIRE_EXPLICIT_PERMISSION_MODE)
-        .map(|v| v == "1")
-        .unwrap_or(false);
+    let require_explicit =
+        std::env::var(ENV_REQUIRE_EXPLICIT_PERMISSION_MODE).map(|v| v == "1").unwrap_or(false);
 
     let permission_mode = match resolve_permission_mode(
         cli_dangerously_skip,
@@ -52,9 +52,7 @@ pub async fn run_print(
             eprintln!(
                 "error: --permission-mode required by org policy ({ENV_REQUIRE_EXPLICIT_PERMISSION_MODE}=1)"
             );
-            eprintln!(
-                "hint: pass --permission-mode dontAsk or --dangerously-skip-permissions"
-            );
+            eprintln!("hint: pass --permission-mode dontAsk or --dangerously-skip-permissions");
             return HeadlessExit::UsageError.code();
         }
         ResolvedPermissionMode::Mode { mode, warning } => {
@@ -86,7 +84,8 @@ pub async fn run_print(
         return HeadlessExit::UsageError.code();
     }
 
-    let launch_settings = build_launch_settings(permission_mode, args.model.as_deref(), args.max_turns);
+    let launch_settings =
+        build_launch_settings(permission_mode, args.model.as_deref(), args.max_turns);
 
     let bridge_launcher = match crate::agent::bridge::resolve_bridge_launcher(bridge_script) {
         Ok(l) => l,
@@ -111,11 +110,13 @@ pub async fn run_print(
             // `Emitter`. Re-locking on every write is fine: headless emits one
             // line per event and stdout writes are already line-buffered.
             let mut emitter = StreamJsonEmitter::new(std::io::stdout());
-            run_session(&mut reader, &mut writer, &mut emitter, args, cwd, &prompt, launch_settings).await
+            run_session(&mut reader, &mut writer, &mut emitter, args, cwd, &prompt, launch_settings)
+                .await
         }
         PrintOutputFormat::Text => {
             let mut emitter = TextEmitter::new(std::io::stdout(), std::io::stderr());
-            run_session(&mut reader, &mut writer, &mut emitter, args, cwd, &prompt, launch_settings).await
+            run_session(&mut reader, &mut writer, &mut emitter, args, cwd, &prompt, launch_settings)
+                .await
         }
     };
 
@@ -187,9 +188,8 @@ async fn run_session(
         Err(exit) => return exit.code(),
     };
     let session_id = match &connect_env.event {
-        BridgeEvent::Connected { session_id, .. } | BridgeEvent::SessionReplaced { session_id, .. } => {
-            session_id.clone()
-        }
+        BridgeEvent::Connected { session_id, .. }
+        | BridgeEvent::SessionReplaced { session_id, .. } => session_id.clone(),
         // connect_phase guarantees one of the above on Ok().
         _ => unreachable!("connect_phase returned non-Connected event"),
     };
@@ -268,10 +268,8 @@ fn build_launch_settings(
     max_turns: Option<u32>,
 ) -> SessionLaunchSettings {
     let mut settings = serde_json::Map::new();
-    settings.insert(
-        "permissions".to_owned(),
-        serde_json::json!({ "defaultMode": permission_mode }),
-    );
+    settings
+        .insert("permissions".to_owned(), serde_json::json!({ "defaultMode": permission_mode }));
     if let Some(m) = model {
         settings.insert("model".to_owned(), serde_json::Value::String(m.to_owned()));
     }

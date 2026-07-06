@@ -307,11 +307,7 @@ fn handle_clear_submit(app: &mut App, args: &[&str]) -> bool {
     app.pending_compact_clear = false;
     app.viewport.engage_auto_scroll();
     app.needs_redraw = true;
-    push_system_message_with_severity(
-        app,
-        Some(SystemSeverity::Info),
-        "Conversation cleared.",
-    );
+    push_system_message_with_severity(app, Some(SystemSeverity::Info), "Conversation cleared.");
     true
 }
 

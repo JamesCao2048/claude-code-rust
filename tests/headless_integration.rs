@@ -62,7 +62,9 @@ pub fn ev_connected(session_id: &str) -> String {
 
 pub fn ev_turn_complete(session_id: &str, terminal_reason: Option<&str>) -> String {
     match terminal_reason {
-        Some(r) => format!(r#"{{"event":"turn_complete","session_id":"{session_id}","terminal_reason":"{r}"}}"#),
+        Some(r) => format!(
+            r#"{{"event":"turn_complete","session_id":"{session_id}","terminal_reason":"{r}"}}"#
+        ),
         None => format!(r#"{{"event":"turn_complete","session_id":"{session_id}"}}"#),
     }
 }
@@ -72,7 +74,8 @@ pub fn ev_permission_request(session_id: &str) -> String {
     // ToolCall is hefty — see `crate::agent::types::ToolCall`. Provide the
     // minimum field set with empty arrays / None for everything optional.
     let tool_call = r#"{"tool_call_id":"tc1","title":"Bash","kind":"BashTool","status":"pending","content":[],"raw_input":null,"raw_output":null,"output_metadata":null,"task_metadata":null,"locations":[],"meta":null}"#;
-    let options = r#"[{"option_id":"allow","name":"Allow","description":null,"kind":"allow_once"}]"#;
+    let options =
+        r#"[{"option_id":"allow","name":"Allow","description":null,"kind":"allow_once"}]"#;
     format!(
         r#"{{"event":"permission_request","session_id":"{session_id}","request":{{"tool_call":{tool_call},"options":{options},"display":null}}}}"#
     )
@@ -94,7 +97,10 @@ pub fn ev_chunk(session_id: &str, text: &str) -> String {
 // ---------------------------------------------------------------------------
 #[test]
 fn t16_happy_path_stream_json() {
-    if !node_available() { eprintln!("skip: node not on PATH"); return; }
+    if !node_available() {
+        eprintln!("skip: node not on PATH");
+        return;
+    }
     let session = "s-t16";
     let script = StubScript::new(vec![
         format!("EMIT {}", ev_initialized()),
@@ -130,7 +136,10 @@ fn t16_happy_path_stream_json() {
 // ---------------------------------------------------------------------------
 #[test]
 fn t17_happy_path_text() {
-    if !node_available() { eprintln!("skip: node not on PATH"); return; }
+    if !node_available() {
+        eprintln!("skip: node not on PATH");
+        return;
+    }
     let session = "s-t17";
     let script = StubScript::new(vec![
         format!("EMIT {}", ev_initialized()),
@@ -155,7 +164,10 @@ fn t17_happy_path_text() {
 // ---------------------------------------------------------------------------
 #[test]
 fn t18_hang_after_result_force_kills_within_grace() {
-    if !node_available() { eprintln!("skip: node not on PATH"); return; }
+    if !node_available() {
+        eprintln!("skip: node not on PATH");
+        return;
+    }
     let session = "s-t18";
     let script = StubScript::new(vec![
         format!("EMIT {}", ev_initialized()),
@@ -183,7 +195,10 @@ fn t18_hang_after_result_force_kills_within_grace() {
 // ---------------------------------------------------------------------------
 #[test]
 fn t19_rogue_permission_request_exit_2() {
-    if !node_available() { eprintln!("skip: node not on PATH"); return; }
+    if !node_available() {
+        eprintln!("skip: node not on PATH");
+        return;
+    }
     let session = "s-t19";
     let script = StubScript::new(vec![
         format!("EMIT {}", ev_initialized()),
@@ -202,7 +217,10 @@ fn t19_rogue_permission_request_exit_2() {
 // ---------------------------------------------------------------------------
 #[test]
 fn t20_no_prompt_with_empty_stdin_exits_64() {
-    if !node_available() { eprintln!("skip: node not on PATH"); return; }
+    if !node_available() {
+        eprintln!("skip: node not on PATH");
+        return;
+    }
     // No script needed — the binary should refuse before spawning the bridge.
     let stub_js = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/headless/stub_bridge.mjs");
@@ -219,7 +237,10 @@ fn t20_no_prompt_with_empty_stdin_exits_64() {
 // ---------------------------------------------------------------------------
 #[test]
 fn t21_terminal_reason_max_turns_exit_1() {
-    if !node_available() { eprintln!("skip: node not on PATH"); return; }
+    if !node_available() {
+        eprintln!("skip: node not on PATH");
+        return;
+    }
     let session = "s-t21";
     let script = StubScript::new(vec![
         format!("EMIT {}", ev_initialized()),
@@ -238,8 +259,5 @@ fn t21_terminal_reason_max_turns_exit_1() {
         stdout.contains(r#""terminal_reason":"max_turns""#),
         "expected max_turns reason in NDJSON; stdout: {stdout}"
     );
-    assert!(
-        stderr.contains("max_turns"),
-        "expected max_turns mention on stderr; stderr: {stderr}"
-    );
+    assert!(stderr.contains("max_turns"), "expected max_turns mention on stderr; stderr: {stderr}");
 }

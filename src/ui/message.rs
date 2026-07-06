@@ -1477,8 +1477,10 @@ mod tests {
         let rendered = append_welcome_intro_from_dir(&mut lines, "", dir.path());
 
         assert!(rendered);
-        let texts: Vec<String> =
-            lines.iter().map(|line| line.spans.iter().map(|s| s.content.as_ref()).collect()).collect();
+        let texts: Vec<String> = lines
+            .iter()
+            .map(|line| line.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect();
         assert_eq!(texts, vec!["# Title", "- **/generate** — gen", "⚠ warning", "plain body"]);
         // heading -> bold orange, warning -> yellow, list -> bold dim, body -> dim
         assert_eq!(lines[0].spans[0].style.fg, Some(theme::RUST_ORANGE));

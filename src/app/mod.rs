@@ -64,8 +64,8 @@ pub use state::{
     TurnNoticeRef, UpdateNoticeState, UsageSnapshot, UsageSourceKind, UsageSourceMode, UsageState,
     UsageWindow, WelcomeBlock, WorkflowActionCompletion, WorkflowActionRow, WorkflowActionStatus,
     WorkflowFinalizeKind, WorkflowFinalizeRow, WorkflowProgressState, WorkflowSubagentToolRow,
-    compute_scrollbar_geometry, hash_text_block_content,
-    hash_welcome_block_content, is_execute_tool_name,
+    compute_scrollbar_geometry, hash_text_block_content, hash_welcome_block_content,
+    is_execute_tool_name,
 };
 pub use trust::TrustSelection;
 pub use update_check::start_update_check;

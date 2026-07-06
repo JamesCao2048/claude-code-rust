@@ -105,6 +105,10 @@ pub struct WorkflowActionRow {
     pub kind: String,
     /// Action name, e.g. the agent name or nested workflow name.
     pub name: String,
+    /// Short action-level detail from `events.jsonl`, such as task scope,
+    /// retry cap, skill args, or expected artifact count. This is workflow
+    /// metadata, not nested tool-call detail.
+    pub detail: Option<String>,
     /// `None` while running; `Some` once completed.
     pub completed: Option<WorkflowActionCompletion>,
     /// Subagent tool calls nested under this action (Phase 2), keyed by

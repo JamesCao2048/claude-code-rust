@@ -259,7 +259,9 @@ pub fn create_app(cli: &Cli) -> App {
         startup_permission_mode_override: cli.resolved_permission_mode().map(|mode| match mode {
             crate::CliPermissionMode::Default => super::config::DefaultPermissionMode::Default,
             crate::CliPermissionMode::Auto => super::config::DefaultPermissionMode::Auto,
-            crate::CliPermissionMode::AcceptEdits => super::config::DefaultPermissionMode::AcceptEdits,
+            crate::CliPermissionMode::AcceptEdits => {
+                super::config::DefaultPermissionMode::AcceptEdits
+            }
             crate::CliPermissionMode::Plan => super::config::DefaultPermissionMode::Plan,
             crate::CliPermissionMode::DontAsk => super::config::DefaultPermissionMode::DontAsk,
             crate::CliPermissionMode::BypassPermissions => {

@@ -1161,8 +1161,7 @@ mod tests {
         let mut app = App::test_default();
         let consumed = try_handle_submit(&mut app, "/clear extra");
         assert!(consumed);
-        let Some(MessageBlock::Text(block)) =
-            app.messages.last().and_then(|m| m.blocks.first())
+        let Some(MessageBlock::Text(block)) = app.messages.last().and_then(|m| m.blocks.first())
         else {
             panic!("expected text block");
         };
