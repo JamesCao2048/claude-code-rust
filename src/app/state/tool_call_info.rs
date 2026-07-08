@@ -96,6 +96,16 @@ impl WorkflowProgressState {
             let _ = stop.send(true);
         }
     }
+
+    /// Whether the progress block has any visible content yet: a workflow
+    /// header, at least one action row, or a finalized summary. Until the first
+    /// event arrives this is false, so the render path keeps showing the raw
+    /// Bash stdout instead of hiding it behind an empty progress box (e.g. when
+    /// `events.jsonl` never appears because the run dir did not match).
+    #[must_use]
+    pub fn has_content(&self) -> bool {
+        self.workflow.is_some() || !self.actions.is_empty() || self.finalized.is_some()
+    }
 }
 
 /// One action row under a workflow progress block.

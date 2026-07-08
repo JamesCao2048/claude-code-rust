@@ -105,10 +105,11 @@ pub(super) fn maybe_start_workflow_tail(app: &mut App, tool_call_id: &str) {
         .await;
     });
 
-    // Phase 2: also tail the sibling agent_stream.jsonl for subagent tool
-    // calls. The engine does not emit this file today, so this is a silent
-    // no-op until it appears (poll-until-exists); it shares the events tail's
-    // stop signal so finalize/abort stops both.
+    // Also tail the sibling agent_stream.jsonl for subagent tool calls. The
+    // engine writes it via AgentStreamWriter (one line per subagent tool
+    // use/result); the tail poll-waits and is a silent no-op only while the
+    // file is absent (e.g. an older engine). Shares the events tail's stop
+    // signal so finalize/abort/tool-end stops both.
     let event_tx2 = app.event_tx.clone();
     let id2 = tool_call_id.to_owned();
     tokio::task::spawn_local(async move {

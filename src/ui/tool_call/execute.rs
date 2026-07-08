@@ -44,7 +44,10 @@ pub(super) fn render_execute_content(tc: &ToolCallInfo) -> Vec<Line<'static>> {
 
     // Live workflow progress (lingxi-ascendc run): structured child rows in
     // place of the subprocess stdout, which only arrives once the run exits.
-    if let Some(ref progress) = tc.workflow_progress {
+    // Only replaces stdout once at least one event has landed — until then the
+    // raw output stays visible, so a run whose events.jsonl never appears still
+    // shows its subprocess output instead of a permanently empty progress box.
+    if let Some(progress) = tc.workflow_progress.as_ref().filter(|p| p.has_content()) {
         lines.extend(render_workflow_progress(progress));
         // Inline permission/question controls may still apply (e.g. an
         // await_user_decision escalation surfaces a permission); keep them.
@@ -382,6 +385,19 @@ mod tests {
     fn state() -> WorkflowProgressState {
         let (tx, _rx) = tokio::sync::watch::channel(false);
         WorkflowProgressState::new(tx)
+    }
+
+    #[test]
+    fn empty_progress_keeps_raw_stdout_visible() {
+        // Before any event lands the progress box is empty; the raw Bash stdout
+        // must stay visible instead of being hidden behind an empty box (e.g.
+        // when events.jsonl never appears because the run dir did not match).
+        let tc = bash_with_progress(state());
+        let joined = render_text(&render_execute_content(&tc)).join("\n");
+        assert!(
+            joined.contains("this raw stdout should be suppressed"),
+            "empty progress must not hide stdout:\n{joined}"
+        );
     }
 
     #[test]

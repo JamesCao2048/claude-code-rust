@@ -243,11 +243,12 @@ pub enum FinalizeKind {
     Escalated,
 }
 
-/// A single subagent tool-call event from a run's sibling `agent_stream.jsonl`
-/// (Phase 2). Nested under the parent action row keyed by `action_id`.
+/// A single subagent tool-call event from a run's sibling `agent_stream.jsonl`.
+/// Nested under the parent action row keyed by `action_id`.
 ///
-/// The engine does not emit this file today; the tail is schema-ready and a
-/// silent no-op while the file is absent. Schema:
+/// The engine writes this file via its `AgentStreamWriter` (one line per
+/// subagent `tool_use` / `tool_result`); the tail poll-waits for it and is a
+/// silent no-op only while the file is absent (e.g. an older engine). Schema:
 /// `{ts, action_id, agent_name, tool_call_id, kind:"tool_use"|"tool_result",
 /// name, detail?, status?}`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -595,14 +596,19 @@ fn classify_result(_kind: &str, result: &serde_json::Value) -> (ActionStatus, St
             missing.iter().filter_map(|v| v.as_str().map(ToOwned::to_owned)).collect();
         return (ActionStatus::Fail, format!("missing: {}", names.join(", ")));
     }
-    if let Some(summary) = result.get("summary").and_then(|v| v.as_str()).filter(|s| !s.is_empty())
-    {
-        return (status_for_outcome_word(summary), truncate(summary));
-    }
-    if let Some(outcome) =
-        result.get("marker").and_then(|m| m.get("outcome")).and_then(|v| v.as_str())
-    {
-        return (status_for_outcome_word(outcome), truncate(outcome));
+    // Prefer the structured `marker.outcome` word to classify the *status* — a
+    // free-text `summary` like "no failures detected" must not be miscolored
+    // Fail by the substring scan. The summary is still preferred as the display
+    // *text* when present; fall back to scanning it only when no marker exists.
+    let marker_outcome = result
+        .get("marker")
+        .and_then(|m| m.get("outcome"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty());
+    let summary = result.get("summary").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
+    if let Some(text) = summary.or(marker_outcome) {
+        let status = status_for_outcome_word(marker_outcome.unwrap_or(text));
+        return (status, truncate(text));
     }
     match result.get("success").and_then(serde_json::Value::as_bool) {
         Some(true) => (ActionStatus::Ok, "ok".to_owned()),
@@ -700,11 +706,12 @@ pub async fn tail_events<F>(
     .await;
 }
 
-/// Tail a run's sibling `agent_stream.jsonl` (Phase 2) and forward every
-/// [`SubagentToolEvent`] to `emit`. The engine does not emit this file today,
-/// so this is a silent no-op until the file appears (poll-until-exists), then
-/// follows appended lines like [`tail_events`]. There is no terminal event for
-/// the subagent stream; it runs until the stop signal fires.
+/// Tail a run's sibling `agent_stream.jsonl` and forward every
+/// [`SubagentToolEvent`] to `emit`. The engine writes this file via its
+/// `AgentStreamWriter`; the tail poll-waits for it (a silent no-op while it is
+/// absent, e.g. an older engine), then follows appended lines like
+/// [`tail_events`]. There is no terminal event for the subagent stream; it runs
+/// until the stop signal fires.
 pub async fn tail_agent_stream<F>(
     stream_path: PathBuf,
     stop: tokio::sync::watch::Receiver<bool>,
@@ -1052,6 +1059,23 @@ mod tests {
         match map_event_line(line).expect("maps") {
             WorkflowProgress::ActionCompleted { status, .. } => {
                 assert_eq!(status, ActionStatus::Retry);
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn map_action_completed_benign_summary_not_miscolored_fail() {
+        // A benign summary containing the substring "fail" must be colored by the
+        // structured marker outcome (Ok), not scanned as Fail; the summary text
+        // is still what gets displayed.
+        let line = r#"{"type":"action_completed","action_id":"a6",
+            "action":{"kind":"verify","name":"verify"},
+            "result":{"summary":"no failures detected","marker":{"outcome":"clean"}}}"#;
+        match map_event_line(line).expect("maps") {
+            WorkflowProgress::ActionCompleted { status, outcome, .. } => {
+                assert_eq!(status, ActionStatus::Ok, "benign summary must not be Fail");
+                assert_eq!(outcome, "no failures detected", "summary is the display text");
             }
             other => panic!("unexpected: {other:?}"),
         }
