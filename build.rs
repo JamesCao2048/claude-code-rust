@@ -32,19 +32,37 @@ fn main() -> io::Result<()> {
         validate_resource_path(&entry.source)?;
         validate_resource_path(dest)?;
 
+        // Emit before the optional-skip check so a later `git submodule
+        // update --init` that brings the source into existence re-triggers
+        // packaging.
+        println!("cargo:rerun-if-changed={}", source.display());
+
+        // Optional entries (`file?` / `dir?`) whose source is absent are
+        // skipped with a build warning instead of failing. Used for the
+        // Z-Search submodule so contributors without access to it can still
+        // build — they get a binary without the deep-optimize backend.
+        if skip_missing_optional(entry.optional, &source) {
+            println!(
+                "cargo:warning=optional resource missing, skipping (build will lack it): {}",
+                source.display()
+            );
+            continue;
+        }
+
         match entry.kind {
-            ResourceKind::File => {
-                println!("cargo:rerun-if-changed={}", source.display());
-                copy_file(&source, &target)?;
-            }
-            ResourceKind::Dir => {
-                println!("cargo:rerun-if-changed={}", source.display());
-                copy_dir_recursive(&source, &target)?;
-            }
+            ResourceKind::File => copy_file(&source, &target)?,
+            ResourceKind::Dir => copy_dir_recursive(&source, &target)?,
         }
     }
 
     Ok(())
+}
+
+/// An optional resource whose source is missing is skipped (see main loop);
+/// a required resource never is (`copy_file` / `copy_dir_recursive` then fail
+/// loudly). Extracted so the skip decision is unit-testable.
+fn skip_missing_optional(optional: bool, source: &Path) -> bool {
+    optional && !source.exists()
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -56,6 +74,9 @@ enum ResourceKind {
 #[derive(Debug)]
 struct ResourceEntry {
     kind: ResourceKind,
+    // `file?` / `dir?`: skip with a warning when the source is missing instead
+    // of failing the build (used for the optional Z-Search submodule subset).
+    optional: bool,
     source: PathBuf,
     dest: Option<PathBuf>,
 }
@@ -69,9 +90,11 @@ fn parse_manifest(content: &str) -> io::Result<Vec<ResourceEntry>> {
         }
 
         let mut parts = line.split_whitespace();
-        let kind = match parts.next() {
-            Some("file") => ResourceKind::File,
-            Some("dir") => ResourceKind::Dir,
+        let (kind, optional) = match parts.next() {
+            Some("file") => (ResourceKind::File, false),
+            Some("file?") => (ResourceKind::File, true),
+            Some("dir") => (ResourceKind::Dir, false),
+            Some("dir?") => (ResourceKind::Dir, true),
             Some(other) => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -113,7 +136,7 @@ fn parse_manifest(content: &str) -> io::Result<Vec<ResourceEntry>> {
             ));
         }
 
-        entries.push(ResourceEntry { kind, source: PathBuf::from(source), dest });
+        entries.push(ResourceEntry { kind, optional, source: PathBuf::from(source), dest });
     }
     Ok(entries)
 }
@@ -322,6 +345,50 @@ mod tests {
         let manifest = "\n# comment\nfile a.md\n\n# another\n";
         let entries = parse_manifest(manifest).expect("parse should succeed");
         assert_eq!(entries.len(), 1);
+    }
+
+    // ── optional resource (`file?` / `dir?`) parsing + skip semantics ─────
+
+    #[test]
+    fn parse_plain_kinds_are_required() {
+        let entries = parse_manifest("file a.md\ndir some/path\n").expect("parse should succeed");
+        assert_eq!(entries.len(), 2);
+        assert!(!entries[0].optional, "plain `file` must be required");
+        assert!(!entries[1].optional, "plain `dir` must be required");
+    }
+
+    #[test]
+    fn parse_optional_file() {
+        let entries = parse_manifest("file? a/b.json as c/d.json\n").expect("parse should succeed");
+        assert_eq!(entries.len(), 1);
+        let e = &entries[0];
+        assert!(matches!(e.kind, ResourceKind::File));
+        assert!(e.optional, "`file?` must be optional");
+        assert_eq!(e.source, PathBuf::from("a/b.json"));
+        assert_eq!(e.dest, Some(PathBuf::from("c/d.json")));
+    }
+
+    #[test]
+    fn parse_optional_dir() {
+        let entries = parse_manifest("dir? foo/bar as baz\n").expect("parse should succeed");
+        assert_eq!(entries.len(), 1);
+        let e = &entries[0];
+        assert!(matches!(e.kind, ResourceKind::Dir));
+        assert!(e.optional, "`dir?` must be optional");
+        assert_eq!(e.source, PathBuf::from("foo/bar"));
+        assert_eq!(e.dest, Some(PathBuf::from("baz")));
+    }
+
+    #[test]
+    fn skip_missing_optional_semantics() {
+        let missing = std::env::temp_dir().join("lingxi_definitely_missing_resource_xyz");
+        assert!(!missing.exists(), "precondition: fixture path must not exist");
+        // Optional + missing => skip; required + missing => do NOT skip (caller
+        // then fails loudly). Present sources are never skipped.
+        assert!(skip_missing_optional(true, &missing), "optional missing => skip");
+        assert!(!skip_missing_optional(false, &missing), "required missing => must not skip");
+        let present = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+        assert!(!skip_missing_optional(true, &present), "optional present => must not skip");
     }
 
     // ── copy_dir_recursive + dir-as-dest integration test ─────────────────
