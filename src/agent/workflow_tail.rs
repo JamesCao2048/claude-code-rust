@@ -56,10 +56,11 @@ impl RunTarget {
     }
 }
 
-/// Detect a `lingxi-ascendc run` invocation in a Bash command string and resolve
-/// where its event file will live, relative to the Bash tool's working dir.
+/// Detect a `lingxi-ascendc run` or scenario invocation in a Bash command string
+/// and resolve where its event file will live, relative to the Bash tool's
+/// working dir.
 ///
-/// Returns `None` for any command that is not a fresh `lingxi-ascendc run`
+/// Returns `None` for any command that is not a fresh Lingxi workflow launch
 /// (including `resume`/`status` subcommands and unrelated commands), so the
 /// caller can cheaply gate every Bash launch.
 #[must_use]
@@ -82,28 +83,40 @@ enum RunDetect {
     WithoutId,
 }
 
-/// Inspect already-split tokens for a `lingxi-ascendc run` invocation. Returns
-/// `None` for anything that is not a fresh run.
+/// Inspect already-split tokens for a `lingxi-ascendc run` invocation or one of
+/// the user-facing scenario commands. Returns `None` for anything that is not a
+/// fresh workflow launch.
 fn parse_run_invocation(tokens: &[String]) -> Option<RunDetect> {
     // Find the binary token (allow an absolute/relative path ending in the
     // binary name, e.g. `./.local/bin/lingxi-ascendc`).
     let bin_idx = tokens.iter().position(|t| is_lingxi_binary(t))?;
     let rest = &tokens[bin_idx + 1..];
 
-    // The first non-flag token after the binary must be the `run` subcommand.
+    // The first non-flag token after the binary must be the `run` subcommand
+    // or one of the scenario entrypoints that delegates to `run`.
     let subcommand = rest.iter().find(|t| !t.starts_with('-'))?;
-    if subcommand != "run" {
+    let is_run = subcommand == "run";
+    let is_scenario = matches!(subcommand.as_str(), "generate" | "debug" | "optimize" | "research");
+    if !is_run && !is_scenario {
         return None;
     }
 
-    // The explicit `run` subcommand writes events.jsonl regardless of
-    // --workflow presence, so surface progress for it. Reject the
-    // resume/status flags that imply an existing run dir we shouldn't relabel.
-    if flag_present(rest, "--resume") || flag_present(rest, "--status") {
+    // Reject run resume/status flags that imply an existing run dir we
+    // shouldn't relabel.
+    if is_run && (flag_present(rest, "--resume") || flag_present(rest, "--status")) {
         return None;
     }
 
-    Some(flag_value(rest, "--run-id").map_or(RunDetect::WithoutId, RunDetect::WithId))
+    match flag_value(rest, "--run-id") {
+        Some(id) => Some(RunDetect::WithId(id)),
+        // The explicit `run` subcommand can synthesize a timestamped run id,
+        // but the TUI cannot know that directory before the engine prints it.
+        // Keep the legacy WithoutId marker so callers can skip live progress.
+        None if is_run => Some(RunDetect::WithoutId),
+        // Scenario commands only become live-tailable when the demo passes an
+        // explicit --run-id; otherwise there is no deterministic target path.
+        None => None,
+    }
 }
 
 fn is_lingxi_binary(token: &str) -> bool {
@@ -198,11 +211,17 @@ pub enum WorkflowProgress {
     Started { workflow: String, params: Vec<(String, String)>, verbose: bool },
     /// `action_started`: an action (agent spawn / nested workflow / verify)
     /// began. `action_id` keys later updates; `kind`/`name` label the row.
-    ActionStarted { action_id: String, kind: String, name: String },
+    /// `detail` is a compact action-level metadata summary from events.jsonl.
+    ActionStarted { action_id: String, kind: String, name: String, detail: Option<String> },
     /// `action_completed`: an action finished. `outcome` is a short
     /// human-facing status derived from the result (marker outcome, error
     /// category, or success/fail), and `status` classifies it for coloring.
-    ActionCompleted { action_id: String, status: ActionStatus, outcome: String },
+    ActionCompleted {
+        action_id: String,
+        status: ActionStatus,
+        outcome: String,
+        detail: Option<String>,
+    },
     /// A terminal workflow decision. `summary` collapses the run to one line;
     /// `kind` distinguishes done/aborted/escalated for coloring.
     Finalized { kind: FinalizeKind, summary: String },
@@ -224,11 +243,12 @@ pub enum FinalizeKind {
     Escalated,
 }
 
-/// A single subagent tool-call event from a run's sibling `agent_stream.jsonl`
-/// (Phase 2). Nested under the parent action row keyed by `action_id`.
+/// A single subagent tool-call event from a run's sibling `agent_stream.jsonl`.
+/// Nested under the parent action row keyed by `action_id`.
 ///
-/// The engine does not emit this file today; the tail is schema-ready and a
-/// silent no-op while the file is absent. Schema:
+/// The engine writes this file via its `AgentStreamWriter` (one line per
+/// subagent `tool_use` / `tool_result`); the tail poll-waits for it and is a
+/// silent no-op only while the file is absent (e.g. an older engine). Schema:
 /// `{ts, action_id, agent_name, tool_call_id, kind:"tool_use"|"tool_result",
 /// name, detail?, status?}`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -328,6 +348,22 @@ struct RawAction {
     kind: String,
     #[serde(default)]
     name: String,
+    #[serde(default)]
+    skill_args: serde_json::Value,
+    #[serde(default)]
+    task: Option<RawTask>,
+    #[serde(default)]
+    expected_artifacts: Vec<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawTask {
+    #[serde(default)]
+    kind: String,
+    #[serde(default)]
+    task_scope: String,
+    #[serde(default)]
+    max_retry_rounds: Option<u64>,
 }
 
 /// Ordered key/value header params parsed from `run_started.params`. The JSON
@@ -380,6 +416,60 @@ fn scalar_to_string(v: &serde_json::Value) -> Option<String> {
         serde_json::Value::Bool(b) => Some(b.to_string()),
         _ => None,
     }
+}
+
+const MAX_ACTION_DETAIL_CHARS: usize = 110;
+
+fn action_detail(action: &RawAction) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+
+    if let Some(task) = action.task.as_ref() {
+        if !task.task_scope.trim().is_empty() {
+            parts.push(format!("scope={}", task.task_scope.trim()));
+        }
+        if let Some(rounds) = task.max_retry_rounds {
+            parts.push(format!("rounds={rounds}"));
+        }
+        if !task.kind.trim().is_empty() {
+            parts.push(format!("task={}", task.kind.trim()));
+        }
+    }
+
+    if let Some(args) = compact_object_fields(&action.skill_args, 4) {
+        parts.push(format!("args:{args}"));
+    }
+
+    if !action.expected_artifacts.is_empty() {
+        if action.expected_artifacts.len() <= 2 {
+            parts.push(format!("expected={}", action.expected_artifacts.join(",")));
+        } else {
+            parts.push(format!("expected={} artifacts", action.expected_artifacts.len()));
+        }
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(truncate_to(&parts.join(" "), MAX_ACTION_DETAIL_CHARS))
+    }
+}
+
+fn compact_object_fields(value: &serde_json::Value, max_fields: usize) -> Option<String> {
+    let obj = value.as_object()?;
+    if obj.is_empty() {
+        return None;
+    }
+    let mut fields = Vec::new();
+    for (idx, (k, v)) in obj.iter().enumerate() {
+        if idx >= max_fields {
+            fields.push(format!("+{}", obj.len() - max_fields));
+            break;
+        }
+        if let Some(s) = scalar_to_string(v) {
+            fields.push(format!("{k}={s}"));
+        }
+    }
+    if fields.is_empty() { None } else { Some(fields.join(" ")) }
 }
 
 /// Raw subagent tool event line from `agent_stream.jsonl` (Phase 2).
@@ -447,14 +537,19 @@ fn map_event(event: RawEvent) -> Option<WorkflowProgress> {
         RawEvent::RunStarted { workflow, params, verbose } => {
             Some(WorkflowProgress::Started { workflow, params: params.0, verbose })
         }
-        RawEvent::ActionStarted { action_id, action } => Some(WorkflowProgress::ActionStarted {
-            action_id,
-            kind: action.kind,
-            name: action.name,
-        }),
+        RawEvent::ActionStarted { action_id, action } => {
+            let detail = action_detail(&action);
+            Some(WorkflowProgress::ActionStarted {
+                action_id,
+                kind: action.kind,
+                name: action.name,
+                detail,
+            })
+        }
         RawEvent::ActionCompleted { action_id, action, result } => {
             let (status, outcome) = classify_result(&action.kind, &result);
-            Some(WorkflowProgress::ActionCompleted { action_id, status, outcome })
+            let detail = action_detail(&action);
+            Some(WorkflowProgress::ActionCompleted { action_id, status, outcome, detail })
         }
         RawEvent::WorkflowDone { reason, outcome } => Some(WorkflowProgress::Finalized {
             kind: FinalizeKind::Done,
@@ -462,7 +557,8 @@ fn map_event(event: RawEvent) -> Option<WorkflowProgress> {
         }),
         RawEvent::WorkflowAborted { category, reason, user_remediation } => {
             let mut summary = format!("aborted [{category}]");
-            let detail = first_nonempty([reason.as_str(), user_remediation.as_deref().unwrap_or("")]);
+            let detail =
+                first_nonempty([reason.as_str(), user_remediation.as_deref().unwrap_or("")]);
             if let Some(detail) = detail {
                 summary.push_str(": ");
                 summary.push_str(detail);
@@ -500,10 +596,19 @@ fn classify_result(_kind: &str, result: &serde_json::Value) -> (ActionStatus, St
             missing.iter().filter_map(|v| v.as_str().map(ToOwned::to_owned)).collect();
         return (ActionStatus::Fail, format!("missing: {}", names.join(", ")));
     }
-    if let Some(outcome) =
-        result.get("marker").and_then(|m| m.get("outcome")).and_then(|v| v.as_str())
-    {
-        return (status_for_outcome_word(outcome), truncate(outcome));
+    // Prefer the structured `marker.outcome` word to classify the *status* — a
+    // free-text `summary` like "no failures detected" must not be miscolored
+    // Fail by the substring scan. The summary is still preferred as the display
+    // *text* when present; fall back to scanning it only when no marker exists.
+    let marker_outcome = result
+        .get("marker")
+        .and_then(|m| m.get("outcome"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty());
+    let summary = result.get("summary").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
+    if let Some(text) = summary.or(marker_outcome) {
+        let status = status_for_outcome_word(marker_outcome.unwrap_or(text));
+        return (status, truncate(text));
     }
     match result.get("success").and_then(serde_json::Value::as_bool) {
         Some(true) => (ActionStatus::Ok, "ok".to_owned()),
@@ -560,9 +665,13 @@ fn first_nonempty<'a, I: IntoIterator<Item = &'a str>>(items: I) -> Option<&'a s
 const MAX_OUTCOME_CHARS: usize = 80;
 
 fn truncate(s: &str) -> String {
+    truncate_to(s, MAX_OUTCOME_CHARS)
+}
+
+fn truncate_to(s: &str, max_chars: usize) -> String {
     let s = s.trim();
-    if s.chars().count() > MAX_OUTCOME_CHARS {
-        let head: String = s.chars().take(MAX_OUTCOME_CHARS.saturating_sub(1)).collect();
+    if s.chars().count() > max_chars {
+        let head: String = s.chars().take(max_chars.saturating_sub(1)).collect();
         format!("{head}\u{2026}")
     } else {
         s.to_owned()
@@ -590,22 +699,19 @@ pub async fn tail_events<F>(
         Some(update) => {
             let terminal = matches!(update, WorkflowProgress::Finalized { .. });
             emit(update);
-            if terminal {
-                LineAction::Stop
-            } else {
-                LineAction::Continue
-            }
+            if terminal { LineAction::Stop } else { LineAction::Continue }
         }
         None => LineAction::Continue,
     })
     .await;
 }
 
-/// Tail a run's sibling `agent_stream.jsonl` (Phase 2) and forward every
-/// [`SubagentToolEvent`] to `emit`. The engine does not emit this file today,
-/// so this is a silent no-op until the file appears (poll-until-exists), then
-/// follows appended lines like [`tail_events`]. There is no terminal event for
-/// the subagent stream; it runs until the stop signal fires.
+/// Tail a run's sibling `agent_stream.jsonl` and forward every
+/// [`SubagentToolEvent`] to `emit`. The engine writes this file via its
+/// `AgentStreamWriter`; the tail poll-waits for it (a silent no-op while it is
+/// absent, e.g. an older engine), then follows appended lines like
+/// [`tail_events`]. There is no terminal event for the subagent stream; it runs
+/// until the stop signal fires.
 pub async fn tail_agent_stream<F>(
     stream_path: PathBuf,
     stop: tokio::sync::watch::Receiver<bool>,
@@ -631,11 +737,8 @@ enum LineAction {
 /// Poll-wait for `path`, then follow appended whole lines, invoking `on_line`
 /// for each. Buffers partial trailing lines. Returns when `on_line` yields
 /// [`LineAction::Stop`], the stop signal fires, or a read error occurs.
-async fn follow_file<F>(
-    path: PathBuf,
-    mut stop: tokio::sync::watch::Receiver<bool>,
-    mut on_line: F,
-) where
+async fn follow_file<F>(path: PathBuf, mut stop: tokio::sync::watch::Receiver<bool>, mut on_line: F)
+where
     F: FnMut(&str) -> LineAction,
 {
     // Phase A: wait for the file to appear.
@@ -718,12 +821,32 @@ mod tests {
 
     #[test]
     fn extract_run_target_absolute_binary_path() {
+        let t =
+            extract_run_target("./.local/bin/lingxi-ascendc run --workflow w --run-id r1", &cwd())
+                .expect("should detect run via path-qualified binary");
+        assert_eq!(t.run_id.as_deref(), Some("r1"));
+    }
+
+    #[test]
+    fn extract_run_target_scenario_with_run_id() {
         let t = extract_run_target(
-            "./.local/bin/lingxi-ascendc run --workflow w --run-id r1",
+            "lingxi-ascendc generate --via cannbot --run-id demo1 --bench NPUKernelBench --select L1/1",
             &cwd(),
         )
-        .expect("should detect run via path-qualified binary");
-        assert_eq!(t.run_id.as_deref(), Some("r1"));
+        .expect("scenario with explicit run id should resolve");
+        assert_eq!(t.run_id.as_deref(), Some("demo1"));
+        assert_eq!(t.events_path(), PathBuf::from("/runs/demo1/events.jsonl"));
+    }
+
+    #[test]
+    fn extract_run_target_scenario_without_run_id_is_skipped() {
+        assert!(
+            extract_run_target(
+                "lingxi-ascendc generate --via cannbot --bench NPUKernelBench --select L1/1",
+                &cwd(),
+            )
+            .is_none()
+        );
     }
 
     #[test]
@@ -754,7 +877,9 @@ mod tests {
     #[test]
     fn extract_run_target_rejects_non_run_subcommands() {
         assert!(extract_run_target("lingxi-ascendc verify-env --target ascendc", &cwd()).is_none());
-        assert!(extract_run_target("lingxi-ascendc batch --workflow w --select x", &cwd()).is_none());
+        assert!(
+            extract_run_target("lingxi-ascendc batch --workflow w --select x", &cwd()).is_none()
+        );
         assert!(extract_run_target("lingxi-ascendc --version", &cwd()).is_none());
     }
 
@@ -763,9 +888,7 @@ mod tests {
         assert!(
             extract_run_target("lingxi-ascendc run --resume op1 --workflow w", &cwd()).is_none()
         );
-        assert!(
-            extract_run_target("lingxi-ascendc run --status --workflow w", &cwd()).is_none()
-        );
+        assert!(extract_run_target("lingxi-ascendc run --status --workflow w", &cwd()).is_none());
     }
 
     #[test]
@@ -846,8 +969,30 @@ mod tests {
                 action_id: "act_1".to_owned(),
                 kind: "spawn_agent".to_owned(),
                 name: "aog-kernel-worker".to_owned(),
+                detail: None,
             }
         );
+    }
+
+    #[test]
+    fn map_action_started_extracts_action_detail() {
+        let line = r#"{"type":"action_started","action_id":"act_1",
+            "action":{
+                "kind":"spawn_agent",
+                "name":"cannbot-producer",
+                "task":{"kind":"generate_ascendc_cannbot_split","task_scope":"full","max_retry_rounds":20},
+                "expected_artifacts":["full_task/model_new_ascendc.py","verification.json","trace/manifest.json"]
+            }}"#;
+        let u = map_event_line(line).expect("action_started maps");
+        match u {
+            WorkflowProgress::ActionStarted { detail, .. } => {
+                let detail = detail.expect("detail");
+                assert!(detail.contains("scope=full"), "detail={detail}");
+                assert!(detail.contains("rounds=20"), "detail={detail}");
+                assert!(detail.contains("expected=3 artifacts"), "detail={detail}");
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
     }
 
     #[test]
@@ -857,7 +1002,7 @@ mod tests {
             "result":{"marker":{"outcome":"clean"}}}"#;
         let u = map_event_line(line).expect("completed maps");
         match u {
-            WorkflowProgress::ActionCompleted { action_id, status, outcome } => {
+            WorkflowProgress::ActionCompleted { action_id, status, outcome, .. } => {
                 assert_eq!(action_id, "act_1");
                 assert_eq!(status, ActionStatus::Ok);
                 assert_eq!(outcome, "clean");
@@ -914,6 +1059,23 @@ mod tests {
         match map_event_line(line).expect("maps") {
             WorkflowProgress::ActionCompleted { status, .. } => {
                 assert_eq!(status, ActionStatus::Retry);
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn map_action_completed_benign_summary_not_miscolored_fail() {
+        // A benign summary containing the substring "fail" must be colored by the
+        // structured marker outcome (Ok), not scanned as Fail; the summary text
+        // is still what gets displayed.
+        let line = r#"{"type":"action_completed","action_id":"a6",
+            "action":{"kind":"verify","name":"verify"},
+            "result":{"summary":"no failures detected","marker":{"outcome":"clean"}}}"#;
+        match map_event_line(line).expect("maps") {
+            WorkflowProgress::ActionCompleted { status, outcome, .. } => {
+                assert_eq!(status, ActionStatus::Ok, "benign summary must not be Fail");
+                assert_eq!(outcome, "no failures detected", "summary is the display text");
             }
             other => panic!("unexpected: {other:?}"),
         }
@@ -1024,8 +1186,7 @@ mod tests {
         let local = tokio::task::LocalSet::new();
         local
             .run_until(async {
-                let dir =
-                    std::env::temp_dir().join(format!("wf_substream_{}", std::process::id()));
+                let dir = std::env::temp_dir().join(format!("wf_substream_{}", std::process::id()));
                 let _ = tokio::fs::remove_dir_all(&dir).await;
                 let stream = dir.join("agent_stream.jsonl"); // never created
 
@@ -1141,12 +1302,8 @@ mod tests {
 
     async fn append_line(path: &Path, line: &str) {
         use tokio::io::AsyncWriteExt;
-        let mut f = tokio::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .await
-            .unwrap();
+        let mut f =
+            tokio::fs::OpenOptions::new().create(true).append(true).open(path).await.unwrap();
         f.write_all(line.as_bytes()).await.unwrap();
         f.write_all(b"\n").await.unwrap();
         f.flush().await.unwrap();

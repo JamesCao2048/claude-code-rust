@@ -748,10 +748,7 @@ fn always_thinking_toggles_in_settings_document() {
 
     // Lingxi default for always_thinking is `true` when missing, so the first
     // toggle persists `false`.
-    assert_eq!(
-        store::always_thinking_enabled(&app.config.committed_settings_document),
-        Ok(false)
-    );
+    assert_eq!(store::always_thinking_enabled(&app.config.committed_settings_document), Ok(false));
 }
 
 #[test]

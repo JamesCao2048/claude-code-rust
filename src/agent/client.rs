@@ -288,8 +288,7 @@ async fn write_command_envelope(
     let bridge_command = envelope.command.command_name();
     let session_id = envelope.command.session_id().unwrap_or("");
     let tool_call_id = envelope.command.tool_call_id().unwrap_or("");
-    let line = serde_json::to_string(&envelope)
-        .context("failed to serialize bridge command")?;
+    let line = serde_json::to_string(&envelope).context("failed to serialize bridge command")?;
     let size_bytes = line.len() + 1;
     stdin.write_all(line.as_bytes()).await.context("failed to write bridge command")?;
     stdin.write_all(b"\n").await.context("failed to write bridge newline")?;

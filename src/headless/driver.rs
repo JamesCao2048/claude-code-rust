@@ -13,10 +13,7 @@
 /// — the driver should print the design's hint message and exit 64.
 #[derive(Debug, PartialEq, Eq)]
 pub enum ResolvedPermissionMode {
-    Mode {
-        mode: &'static str,
-        warning: Option<String>,
-    },
+    Mode { mode: &'static str, warning: Option<String> },
     RefuseExplicitRequired,
 }
 
@@ -36,10 +33,7 @@ pub fn resolve_permission_mode(
     require_explicit: bool,
 ) -> ResolvedPermissionMode {
     if cli_dangerously_skip {
-        return ResolvedPermissionMode::Mode {
-            mode: "bypassPermissions",
-            warning: None,
-        };
+        return ResolvedPermissionMode::Mode { mode: "bypassPermissions", warning: None };
     }
     if let Some(mode) = cli_mode {
         // Leak: caller passes a string borrowed for the program lifetime.
@@ -54,10 +48,7 @@ pub fn resolve_permission_mode(
             "bypassPermissions" => "bypassPermissions",
             other => Box::leak(other.to_owned().into_boxed_str()),
         };
-        return ResolvedPermissionMode::Mode {
-            mode: mode_static,
-            warning: None,
-        };
+        return ResolvedPermissionMode::Mode { mode: mode_static, warning: None };
     }
     if require_explicit {
         return ResolvedPermissionMode::RefuseExplicitRequired;
@@ -106,19 +97,14 @@ mod permission_tests {
         let r = resolve_permission_mode(true, None, true);
         assert!(matches!(
             r,
-            ResolvedPermissionMode::Mode {
-                mode: "bypassPermissions",
-                warning: None
-            }
+            ResolvedPermissionMode::Mode { mode: "bypassPermissions", warning: None }
         ));
     }
 
     #[test]
     fn explicit_mode_used_as_is_no_warning() {
         let r = resolve_permission_mode(false, Some("dontAsk"), false);
-        let ResolvedPermissionMode::Mode { mode, warning } = r else {
-            panic!("expected Mode")
-        };
+        let ResolvedPermissionMode::Mode { mode, warning } = r else { panic!("expected Mode") };
         assert_eq!(mode, "dontAsk");
         assert!(warning.is_none());
     }
@@ -126,9 +112,7 @@ mod permission_tests {
     #[test]
     fn explicit_mode_beats_env_hatch() {
         let r = resolve_permission_mode(false, Some("dontAsk"), true);
-        let ResolvedPermissionMode::Mode { mode, warning } = r else {
-            panic!("expected Mode")
-        };
+        let ResolvedPermissionMode::Mode { mode, warning } = r else { panic!("expected Mode") };
         assert_eq!(mode, "dontAsk");
         assert!(warning.is_none());
     }
@@ -136,9 +120,7 @@ mod permission_tests {
     #[test]
     fn neither_set_with_env_unset_warns_and_bypasses() {
         let r = resolve_permission_mode(false, None, false);
-        let ResolvedPermissionMode::Mode { mode, warning } = r else {
-            panic!("expected Mode")
-        };
+        let ResolvedPermissionMode::Mode { mode, warning } = r else { panic!("expected Mode") };
         assert_eq!(mode, "bypassPermissions");
         let w = warning.expect("warning required when defaulting to bypass");
         assert!(w.contains("defaulting to bypassPermissions"));
@@ -160,14 +142,8 @@ mod prompt_source_tests {
 
     #[test]
     fn positional_prompt_used_regardless_of_tty() {
-        assert_eq!(
-            classify_prompt(Some("hi"), true),
-            PromptSource::Provided("hi".to_owned())
-        );
-        assert_eq!(
-            classify_prompt(Some("hi"), false),
-            PromptSource::Provided("hi".to_owned())
-        );
+        assert_eq!(classify_prompt(Some("hi"), true), PromptSource::Provided("hi".to_owned()));
+        assert_eq!(classify_prompt(Some("hi"), false), PromptSource::Provided("hi".to_owned()));
     }
 
     #[test]
@@ -286,9 +262,7 @@ pub async fn init_phase(src: &mut dyn EventSource) -> Result<EventEnvelope, Head
         match next {
             Ok(Some(env)) => match &env.event {
                 BridgeEvent::Initialized { .. } => return Ok(env),
-                BridgeEvent::ConnectionFailed { .. } => {
-                    return Err(HeadlessExit::ConnectionFailed)
-                }
+                BridgeEvent::ConnectionFailed { .. } => return Err(HeadlessExit::ConnectionFailed),
                 // Anything else: bridge protocol pins `Initialized` first, so
                 // this path is defensive — keep waiting until the deadline.
                 _ => {}
@@ -316,12 +290,10 @@ pub async fn connect_phase(src: &mut dyn EventSource) -> Result<EventEnvelope, H
         match next {
             Ok(Some(env)) => match &env.event {
                 BridgeEvent::Connected { .. } | BridgeEvent::SessionReplaced { .. } => {
-                    return Ok(env)
+                    return Ok(env);
                 }
                 BridgeEvent::AuthRequired { .. } => return Err(HeadlessExit::AuthRequired),
-                BridgeEvent::ConnectionFailed { .. } => {
-                    return Err(HeadlessExit::ConnectionFailed)
-                }
+                BridgeEvent::ConnectionFailed { .. } => return Err(HeadlessExit::ConnectionFailed),
                 // Stray `SessionUpdate` etc. before connect — keep waiting.
                 _ => {}
             },
@@ -347,9 +319,7 @@ mod phase_tests {
 
     impl MockSource {
         fn new(items: Vec<(Option<EventEnvelope>, Duration)>) -> Self {
-            Self {
-                queue: items.into(),
-            }
+            Self { queue: items.into() }
         }
     }
 
@@ -385,18 +355,14 @@ mod phase_tests {
     fn initialized_envelope() -> EventEnvelope {
         EventEnvelope {
             request_id: None,
-            event: BridgeEvent::Initialized {
-                result: sample_init_result(),
-            },
+            event: BridgeEvent::Initialized { result: sample_init_result() },
         }
     }
 
     fn connection_failed_envelope() -> EventEnvelope {
         EventEnvelope {
             request_id: None,
-            event: BridgeEvent::ConnectionFailed {
-                message: "boom".into(),
-            },
+            event: BridgeEvent::ConnectionFailed { message: "boom".into() },
         }
     }
 
@@ -440,10 +406,7 @@ mod phase_tests {
 
     #[tokio::test(start_paused = true)]
     async fn init_phase_returns_envelope_when_initialized_arrives_in_time() {
-        let mut src = MockSource::new(vec![(
-            Some(initialized_envelope()),
-            Duration::from_secs(2),
-        )]);
+        let mut src = MockSource::new(vec![(Some(initialized_envelope()), Duration::from_secs(2))]);
         let env = init_phase(&mut src).await.expect("init should succeed");
         assert!(matches!(env.event, BridgeEvent::Initialized { .. }));
     }
@@ -459,10 +422,7 @@ mod phase_tests {
 
     #[tokio::test(start_paused = true)]
     async fn init_phase_maps_connection_failed_to_exit_4() {
-        let mut src = MockSource::new(vec![(
-            Some(connection_failed_envelope()),
-            Duration::ZERO,
-        )]);
+        let mut src = MockSource::new(vec![(Some(connection_failed_envelope()), Duration::ZERO)]);
         let err = init_phase(&mut src).await.expect_err("must fail");
         assert_eq!(err, HeadlessExit::ConnectionFailed);
     }
@@ -480,20 +440,14 @@ mod phase_tests {
 
     #[tokio::test(start_paused = true)]
     async fn connect_phase_returns_connected_in_time() {
-        let mut src = MockSource::new(vec![(
-            Some(connected_envelope()),
-            Duration::from_secs(5),
-        )]);
+        let mut src = MockSource::new(vec![(Some(connected_envelope()), Duration::from_secs(5))]);
         let env = connect_phase(&mut src).await.expect("connect should succeed");
         assert!(matches!(env.event, BridgeEvent::Connected { .. }));
     }
 
     #[tokio::test(start_paused = true)]
     async fn connect_phase_auth_required_maps_to_exit_3() {
-        let mut src = MockSource::new(vec![(
-            Some(auth_required_envelope()),
-            Duration::ZERO,
-        )]);
+        let mut src = MockSource::new(vec![(Some(auth_required_envelope()), Duration::ZERO)]);
         let err = connect_phase(&mut src).await.expect_err("must fail");
         assert_eq!(err, HeadlessExit::AuthRequired);
         assert_eq!(err.code(), 3);
@@ -725,10 +679,7 @@ mod streaming_tests {
     fn turn_complete_envelope(reason: Option<TerminalReason>) -> EventEnvelope {
         EventEnvelope {
             request_id: None,
-            event: BridgeEvent::TurnComplete {
-                session_id: "s1".into(),
-                terminal_reason: reason,
-            },
+            event: BridgeEvent::TurnComplete { session_id: "s1".into(), terminal_reason: reason },
         }
     }
 
@@ -749,10 +700,7 @@ mod streaming_tests {
     fn slash_error_envelope() -> EventEnvelope {
         EventEnvelope {
             request_id: None,
-            event: BridgeEvent::SlashError {
-                session_id: "s1".into(),
-                message: "bad slash".into(),
-            },
+            event: BridgeEvent::SlashError { session_id: "s1".into(), message: "bad slash".into() },
         }
     }
 
@@ -794,10 +742,7 @@ mod streaming_tests {
     async fn happy_path_chunk_then_complete_returns_completed() {
         let mut src = MockEventSource::new(vec![
             (Some(agent_message_envelope("hi")), Duration::ZERO),
-            (
-                Some(turn_complete_envelope(Some(TerminalReason::Completed))),
-                Duration::ZERO,
-            ),
+            (Some(turn_complete_envelope(Some(TerminalReason::Completed))), Duration::ZERO),
         ]);
         let mut sender = MockSender::default();
         let mut emitter = MockEmitter::default();
@@ -808,18 +753,13 @@ mod streaming_tests {
         assert_eq!(exit, HeadlessExit::Completed);
         let events = emitter.events.lock().unwrap().clone();
         assert_eq!(events, vec!["session_update", "turn_complete"]);
-        assert!(
-            sender.cancels.lock().unwrap().is_empty(),
-            "happy path must not call cancel_turn"
-        );
+        assert!(sender.cancels.lock().unwrap().is_empty(), "happy path must not call cancel_turn");
     }
 
     #[tokio::test(start_paused = true)]
     async fn permission_request_returns_prompt_leaked_and_cancels() {
-        let mut src = MockEventSource::new(vec![(
-            Some(permission_request_envelope()),
-            Duration::ZERO,
-        )]);
+        let mut src =
+            MockEventSource::new(vec![(Some(permission_request_envelope()), Duration::ZERO)]);
         let mut sender = MockSender::default();
         let mut emitter = MockEmitter::default();
         let mut wd = Watchdog::new(Duration::from_secs(60), None);
@@ -837,10 +777,7 @@ mod streaming_tests {
 
     #[tokio::test(start_paused = true)]
     async fn turn_error_returns_non_completed_terminal_with_reason() {
-        let mut src = MockEventSource::new(vec![(
-            Some(turn_error_envelope(None)),
-            Duration::ZERO,
-        )]);
+        let mut src = MockEventSource::new(vec![(Some(turn_error_envelope(None)), Duration::ZERO)]);
         let mut sender = MockSender::default();
         let mut emitter = MockEmitter::default();
         let mut wd = Watchdog::new(Duration::from_secs(60), None);
@@ -857,10 +794,7 @@ mod streaming_tests {
     async fn slash_error_is_non_fatal_and_loop_continues() {
         let mut src = MockEventSource::new(vec![
             (Some(slash_error_envelope()), Duration::ZERO),
-            (
-                Some(turn_complete_envelope(Some(TerminalReason::Completed))),
-                Duration::ZERO,
-            ),
+            (Some(turn_complete_envelope(Some(TerminalReason::Completed))), Duration::ZERO),
         ]);
         let mut sender = MockSender::default();
         let mut emitter = MockEmitter::default();
@@ -876,10 +810,8 @@ mod streaming_tests {
 
     #[tokio::test(start_paused = true)]
     async fn eof_after_chunk_is_bridge_closed_unexpectedly() {
-        let mut src = MockEventSource::new(vec![(
-            Some(agent_message_envelope("partial")),
-            Duration::ZERO,
-        )]);
+        let mut src =
+            MockEventSource::new(vec![(Some(agent_message_envelope("partial")), Duration::ZERO)]);
         let mut sender = MockSender::default();
         let mut emitter = MockEmitter::default();
         let mut wd = Watchdog::new(Duration::from_secs(60), None);
@@ -904,10 +836,7 @@ mod streaming_tests {
         assert_eq!(exit.code(), 124);
         let cancels = sender.cancels.lock().unwrap().clone();
         assert_eq!(cancels, vec!["s1".to_owned()]);
-        assert!(
-            emitter.events.lock().unwrap().is_empty(),
-            "watchdog path must not emit events"
-        );
+        assert!(emitter.events.lock().unwrap().is_empty(), "watchdog path must not emit events");
     }
 
     #[tokio::test(start_paused = true)]
@@ -922,10 +851,7 @@ mod streaming_tests {
 
         let exit = streaming_phase(&mut src, &mut sender, &mut emitter, &mut wd, "s1").await;
 
-        assert_eq!(
-            exit,
-            HeadlessExit::NonCompletedTerminal(Some(TerminalReason::MaxTurns))
-        );
+        assert_eq!(exit, HeadlessExit::NonCompletedTerminal(Some(TerminalReason::MaxTurns)));
         let events = emitter.events.lock().unwrap().clone();
         assert_eq!(events, vec!["turn_complete"]);
         assert!(sender.cancels.lock().unwrap().is_empty());
@@ -952,9 +878,7 @@ mod streaming_tests {
 pub async fn shutdown_phase(
     writer: crate::agent::client::BridgeWriter,
 ) -> anyhow::Result<std::process::ExitStatus> {
-    writer
-        .shutdown_with_grace(std::time::Duration::from_secs(SHUTDOWN_TIMEOUT_SECS))
-        .await
+    writer.shutdown_with_grace(std::time::Duration::from_secs(SHUTDOWN_TIMEOUT_SECS)).await
 }
 
 // Production EventSource / Sender impls for the split halves of BridgeClient.

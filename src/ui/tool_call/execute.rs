@@ -5,9 +5,7 @@
 //! (width-independent), borders are applied at render time.
 
 use crate::agent::model;
-use crate::app::{
-    ToolCallInfo, WorkflowActionStatus, WorkflowFinalizeKind, WorkflowProgressState,
-};
+use crate::app::{ToolCallInfo, WorkflowActionStatus, WorkflowFinalizeKind, WorkflowProgressState};
 use crate::ui::highlight;
 use crate::ui::theme;
 use ratatui::style::{Color, Modifier, Style};
@@ -46,7 +44,10 @@ pub(super) fn render_execute_content(tc: &ToolCallInfo) -> Vec<Line<'static>> {
 
     // Live workflow progress (lingxi-ascendc run): structured child rows in
     // place of the subprocess stdout, which only arrives once the run exits.
-    if let Some(ref progress) = tc.workflow_progress {
+    // Only replaces stdout once at least one event has landed — until then the
+    // raw output stays visible, so a run whose events.jsonl never appears still
+    // shows its subprocess output instead of a permanently empty progress box.
+    if let Some(progress) = tc.workflow_progress.as_ref().filter(|p| p.has_content()) {
         lines.extend(render_workflow_progress(progress));
         // Inline permission/question controls may still apply (e.g. an
         // await_user_decision escalation surfaces a permission); keep them.
@@ -221,8 +222,7 @@ fn params_span(params: &[(String, String)]) -> Option<Span<'static>> {
     if params.is_empty() {
         return None;
     }
-    let text =
-        params.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(" ");
+    let text = params.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(" ");
     Some(Span::styled(format!("{text}  "), Style::default().fg(theme::DIM)))
 }
 
@@ -232,7 +232,11 @@ const MAX_SUBAGENT_ROWS: usize = 6;
 /// Append an action row plus, when `verbose`, its nested subagent tool rows.
 /// Default (non-verbose) shows only the action row; the nested Bash/Read/...
 /// rows from `agent_stream.jsonl` render only under `-v`/`--verbose`.
-fn push_action_row(lines: &mut Vec<Line<'static>>, row: &crate::app::WorkflowActionRow, verbose: bool) {
+fn push_action_row(
+    lines: &mut Vec<Line<'static>>,
+    row: &crate::app::WorkflowActionRow,
+    verbose: bool,
+) {
     lines.push(render_action_row(row));
     if !verbose {
         return;
@@ -255,11 +259,15 @@ fn push_action_row(lines: &mut Vec<Line<'static>>, row: &crate::app::WorkflowAct
 fn render_action_row(row: &crate::app::WorkflowActionRow) -> Line<'static> {
     let label = action_label(&row.kind, &row.name);
     match &row.completed {
-        None => Line::from(vec![
-            Span::styled("  \u{2219} ", Style::default().fg(theme::DIM)),
-            Span::styled(label, Style::default().fg(Color::White)),
-            Span::styled("  running", Style::default().fg(theme::DIM)),
-        ]),
+        None => {
+            let mut spans = vec![
+                Span::styled("  \u{2219} ", Style::default().fg(theme::DIM)),
+                Span::styled(label, Style::default().fg(Color::White)),
+            ];
+            push_action_detail(&mut spans, row.detail.as_deref());
+            spans.push(Span::styled("  running", Style::default().fg(theme::DIM)));
+            Line::from(spans)
+        }
         Some(done) => {
             let (glyph, color) = match done.status {
                 WorkflowActionStatus::Ok => ("\u{2713}", Color::Green),
@@ -270,6 +278,7 @@ fn render_action_row(row: &crate::app::WorkflowActionRow) -> Line<'static> {
                 Span::styled(format!("  {glyph} "), Style::default().fg(color)),
                 Span::styled(label, Style::default().fg(Color::White)),
             ];
+            push_action_detail(&mut spans, row.detail.as_deref());
             if !done.outcome.is_empty() {
                 spans.push(Span::styled(
                     format!("  {}", done.outcome),
@@ -281,6 +290,12 @@ fn render_action_row(row: &crate::app::WorkflowActionRow) -> Line<'static> {
     }
 }
 
+fn push_action_detail(spans: &mut Vec<Span<'static>>, detail: Option<&str>) {
+    if let Some(detail) = detail.map(str::trim).filter(|s| !s.is_empty()) {
+        spans.push(Span::styled(format!("  [{detail}]"), Style::default().fg(theme::DIM)));
+    }
+}
+
 fn render_subagent_row(sub: &crate::app::WorkflowSubagentToolRow) -> Line<'static> {
     let label = subagent_label(&sub.name, sub.detail.as_deref());
     if sub.completed {
@@ -289,10 +304,7 @@ fn render_subagent_row(sub: &crate::app::WorkflowSubagentToolRow) -> Line<'stati
             Span::styled(label, Style::default().fg(theme::DIM)),
         ];
         if let Some(status) = sub.status.as_deref().filter(|s| !s.is_empty()) {
-            spans.push(Span::styled(
-                format!("  {status}"),
-                Style::default().fg(theme::DIM),
-            ));
+            spans.push(Span::styled(format!("  {status}"), Style::default().fg(theme::DIM)));
         }
         Line::from(spans)
     } else {
@@ -376,6 +388,19 @@ mod tests {
     }
 
     #[test]
+    fn empty_progress_keeps_raw_stdout_visible() {
+        // Before any event lands the progress box is empty; the raw Bash stdout
+        // must stay visible instead of being hidden behind an empty box (e.g.
+        // when events.jsonl never appears because the run dir did not match).
+        let tc = bash_with_progress(state());
+        let joined = render_text(&render_execute_content(&tc)).join("\n");
+        assert!(
+            joined.contains("this raw stdout should be suppressed"),
+            "empty progress must not hide stdout:\n{joined}"
+        );
+    }
+
+    #[test]
     fn running_progress_replaces_stdout_with_child_rows() {
         let mut s = state();
         s.workflow = Some("generate_ascendc".to_owned());
@@ -383,6 +408,7 @@ mod tests {
             action_id: "a1".to_owned(),
             kind: "spawn_agent".to_owned(),
             name: "aog-kernel-worker".to_owned(),
+            detail: Some("scope=full rounds=20 expected=3 artifacts".to_owned()),
             completed: Some(WorkflowActionCompletion {
                 status: WorkflowActionStatus::Ok,
                 outcome: "clean".to_owned(),
@@ -393,6 +419,7 @@ mod tests {
             action_id: "a2".to_owned(),
             kind: "verify".to_owned(),
             name: "verify".to_owned(),
+            detail: None,
             completed: None,
             subagent_tools: Vec::new(),
         });
@@ -410,6 +437,7 @@ mod tests {
         // Workflow header + both action rows present.
         assert!(joined.contains("generate_ascendc"), "header missing:\n{joined}");
         assert!(joined.contains("spawn_agent: aog-kernel-worker"), "row1:\n{joined}");
+        assert!(joined.contains("scope=full rounds=20"), "detail:\n{joined}");
         assert!(joined.contains("clean"), "outcome:\n{joined}");
         assert!(joined.contains("verify: verify"), "row2:\n{joined}");
         assert!(joined.contains("running"), "running marker:\n{joined}");
@@ -423,6 +451,7 @@ mod tests {
             action_id: "a1".to_owned(),
             kind: "spawn_agent".to_owned(),
             name: "w".to_owned(),
+            detail: None,
             completed: Some(WorkflowActionCompletion {
                 status: WorkflowActionStatus::Ok,
                 outcome: "clean".to_owned(),
@@ -448,6 +477,7 @@ mod tests {
             action_id: "a1".to_owned(),
             kind: "spawn_agent".to_owned(),
             name: "worker".to_owned(),
+            detail: None,
             completed: None,
             subagent_tools: vec![
                 WorkflowSubagentToolRow {
@@ -521,6 +551,7 @@ mod tests {
             action_id: "a1".to_owned(),
             kind: "verify".to_owned(),
             name: "verify".to_owned(),
+            detail: None,
             completed: None,
             subagent_tools: Vec::new(),
         });

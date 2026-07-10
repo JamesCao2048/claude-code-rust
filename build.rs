@@ -124,7 +124,10 @@ fn parse_manifest(content: &str) -> io::Result<Vec<ResourceEntry>> {
             Some(other) => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!("expected `as <dest>` or end of line, got `{other}` on line {}", index + 1),
+                    format!(
+                        "expected `as <dest>` or end of line, got `{other}` on line {}",
+                        index + 1
+                    ),
                 ));
             }
         };
@@ -179,17 +182,17 @@ fn copy_file(source: &Path, target: &Path) -> io::Result<()> {
 fn emit_build_metadata(repo_root: &Path, submodule_dir: &Path) {
     let parent_sha = git_short_sha(repo_root).unwrap_or_else(|| "unknown".to_owned());
     let submodule_sha = git_short_sha(submodule_dir).unwrap_or_else(|| "unknown".to_owned());
-    let dirty_suffix = if git_is_dirty(repo_root) || git_is_dirty(submodule_dir) {
-        "-dirty"
-    } else {
-        ""
-    };
+    let dirty_suffix =
+        if git_is_dirty(repo_root) || git_is_dirty(submodule_dir) { "-dirty" } else { "" };
     let crate_version = env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.0.0".to_owned());
     let version_string =
         format!("{crate_version} ({parent_sha}+sub:{submodule_sha}{dirty_suffix})");
     println!("cargo:rustc-env=LINGXI_BUILD_SHA={parent_sha}");
     println!("cargo:rustc-env=LINGXI_BUILD_SUBMODULE_SHA={submodule_sha}");
-    println!("cargo:rustc-env=LINGXI_BUILD_DIRTY={}", if dirty_suffix.is_empty() { "0" } else { "1" });
+    println!(
+        "cargo:rustc-env=LINGXI_BUILD_DIRTY={}",
+        if dirty_suffix.is_empty() { "0" } else { "1" }
+    );
     println!("cargo:rustc-env=LINGXI_VERSION_STRING={version_string}");
     // Trigger rebuild when HEAD moves. Submodule HEAD lives under parent's
     // .git/modules so the parent HEAD path covers most cases; explicitly
@@ -415,14 +418,8 @@ mod tests {
         assert!(dest_root.join("b/c").is_file(), "file 'b/c' must exist under dest");
 
         // Verify content is faithfully copied.
-        assert_eq!(
-            fs::read_to_string(dest_root.join("a")).unwrap().trim(),
-            "content a"
-        );
-        assert_eq!(
-            fs::read_to_string(dest_root.join("b/c")).unwrap().trim(),
-            "content c"
-        );
+        assert_eq!(fs::read_to_string(dest_root.join("a")).unwrap().trim(), "content a");
+        assert_eq!(fs::read_to_string(dest_root.join("b/c")).unwrap().trim(), "content c");
 
         fs::remove_dir_all(&tmp).unwrap();
     }

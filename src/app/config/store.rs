@@ -300,10 +300,7 @@ pub fn collect_env_overrides(document: &Value) -> Vec<(String, String)> {
     let Some(env_obj) = document.get("env").and_then(Value::as_object) else {
         return Vec::new();
     };
-    env_obj
-        .iter()
-        .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_owned())))
-        .collect()
+    env_obj.iter().filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_owned()))).collect()
 }
 
 /// Load `env` overrides from `~/.claude/settings.json` and `<cwd>/.claude/settings.local.json`,

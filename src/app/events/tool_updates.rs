@@ -169,6 +169,19 @@ fn apply_tool_call_status_update(
         && tc.status != status
     {
         tc.status = status;
+        // The Bash tool call reached a terminal state. Stop any live workflow
+        // tail so it doesn't keep polling events.jsonl/agent_stream.jsonl after
+        // the run process is gone — the engine may not emit a terminal workflow
+        // event on a hard kill/cancel, in which case the tail would leak.
+        if matches!(
+            status,
+            model::ToolCallStatus::Completed
+                | model::ToolCallStatus::Failed
+                | model::ToolCallStatus::Killed
+        ) && let Some(progress) = tc.workflow_progress.as_mut()
+        {
+            progress.stop_tail();
+        }
         return true;
     }
     false
@@ -756,6 +769,23 @@ mod tests {
             pending_question: None,
             workflow_progress: None,
         }
+    }
+
+    #[test]
+    fn terminal_status_stops_workflow_tail() {
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        let mut tc = make_bash_tool_call("t-run", model::ToolCallStatus::InProgress, None);
+        tc.workflow_progress = Some(crate::app::WorkflowProgressState::new(tx));
+        assert!(tc.workflow_progress.as_ref().unwrap().stop.is_some());
+
+        // A terminal transition consumes + fires the tail stop signal, even
+        // though no workflow-terminal event ever arrived (e.g. a hard kill).
+        assert!(apply_tool_call_status_update(&mut tc, Some(model::ToolCallStatus::Killed)));
+        assert!(
+            tc.workflow_progress.as_ref().unwrap().stop.is_none(),
+            "tail stop signal must be consumed on terminal status"
+        );
+        assert!(*rx.borrow(), "stop channel should carry true");
     }
 
     #[test]

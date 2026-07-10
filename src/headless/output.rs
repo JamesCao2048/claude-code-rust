@@ -39,10 +39,7 @@ impl<W: Write> StreamJsonEmitter<W> {
 
     fn write_line(&mut self, value: &serde_json::Value) -> std::io::Result<()> {
         let line = serde_json::to_string(value).map_err(std::io::Error::other)?;
-        debug_assert!(
-            !line.contains('\n'),
-            "stream-json line must not embed newlines"
-        );
+        debug_assert!(!line.contains('\n'), "stream-json line must not embed newlines");
         self.out.write_all(line.as_bytes())?;
         self.out.write_all(b"\n")?;
         self.out.flush()
@@ -60,18 +57,8 @@ fn event_to_json(ev: &BridgeEvent) -> serde_json::Value {
             "agent_version": result.agent_version,
             "capabilities": result.capabilities,
         }),
-        BridgeEvent::Connected {
-            session_id,
-            cwd,
-            current_model,
-            ..
-        }
-        | BridgeEvent::SessionReplaced {
-            session_id,
-            cwd,
-            current_model,
-            ..
-        } => json!({
+        BridgeEvent::Connected { session_id, cwd, current_model, .. }
+        | BridgeEvent::SessionReplaced { session_id, cwd, current_model, .. } => json!({
             "type": "system.session",
             "v": 1,
             "session_id": session_id,
@@ -85,37 +72,24 @@ fn event_to_json(ev: &BridgeEvent) -> serde_json::Value {
             "session_id": session_id,
             "update": update,
         }),
-        BridgeEvent::SlashError {
-            session_id,
-            message,
-        } => json!({
+        BridgeEvent::SlashError { session_id, message } => json!({
             "type": "error_event",
             "v": 1,
             "kind": "slash_error",
             "session_id": session_id,
             "message": message,
         }),
-        BridgeEvent::RuntimeReloadFailed {
-            session_id,
-            message,
-        } => json!({
+        BridgeEvent::RuntimeReloadFailed { session_id, message } => json!({
             "type": "error_event",
             "v": 1,
             "kind": "runtime_reload_failed",
             "session_id": session_id,
             "message": message,
         }),
-        BridgeEvent::TurnComplete {
-            session_id,
-            terminal_reason,
-        } => turn_complete_to_json(session_id, *terminal_reason),
-        BridgeEvent::TurnError {
-            session_id,
-            message,
-            error_kind,
-            terminal_reason,
-            ..
-        } => json!({
+        BridgeEvent::TurnComplete { session_id, terminal_reason } => {
+            turn_complete_to_json(session_id, *terminal_reason)
+        }
+        BridgeEvent::TurnError { session_id, message, error_kind, terminal_reason, .. } => json!({
             "type": "result.error",
             "v": 1,
             "session_id": session_id,
@@ -123,10 +97,7 @@ fn event_to_json(ev: &BridgeEvent) -> serde_json::Value {
             "error_kind": error_kind,
             "terminal_reason": terminal_reason.map(TerminalReason::as_stored),
         }),
-        BridgeEvent::AuthRequired {
-            method_name,
-            method_description,
-        } => json!({
+        BridgeEvent::AuthRequired { method_name, method_description } => json!({
             "type": "result.auth_required",
             "v": 1,
             "method_name": method_name,
@@ -188,9 +159,7 @@ impl<W: Write + Send> Emitter for StreamJsonEmitter<W> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::types::{
-        AgentCapabilities, AuthMethod, InitializeResult, TerminalReason,
-    };
+    use crate::agent::types::{AgentCapabilities, AuthMethod, InitializeResult, TerminalReason};
 
     fn lines(buf: &[u8]) -> Vec<serde_json::Value> {
         std::str::from_utf8(buf)
@@ -219,10 +188,7 @@ mod tests {
     fn stream_json_initialized_emits_system_init_v1() {
         let mut buf = Vec::new();
         let mut e = StreamJsonEmitter::new(&mut buf);
-        e.emit_event(&BridgeEvent::Initialized {
-            result: sample_initialize_result(),
-        })
-        .unwrap();
+        e.emit_event(&BridgeEvent::Initialized { result: sample_initialize_result() }).unwrap();
         let l = lines(&buf);
         assert_eq!(l.len(), 1);
         assert_eq!(l[0]["type"], "system.init");
@@ -262,10 +228,7 @@ mod tests {
     fn slash_error_emits_error_event_kind_slash_error() {
         let mut buf = Vec::new();
         StreamJsonEmitter::new(&mut buf)
-            .emit_event(&BridgeEvent::SlashError {
-                session_id: "s1".into(),
-                message: "bad".into(),
-            })
+            .emit_event(&BridgeEvent::SlashError { session_id: "s1".into(), message: "bad".into() })
             .unwrap();
         let l = lines(&buf);
         assert_eq!(l[0]["type"], "error_event");
@@ -321,11 +284,7 @@ pub struct TextEmitter<W1: Write, W2: Write> {
 
 impl<W1: Write, W2: Write> TextEmitter<W1, W2> {
     pub fn new(stdout: W1, stderr: W2) -> Self {
-        Self {
-            stdout,
-            stderr,
-            show_thinking: false,
-        }
+        Self { stdout, stderr, show_thinking: false }
     }
 
     /// Returns the short (≤60 char) one-line preview used in `● {tool}(...)`.
@@ -349,11 +308,7 @@ impl<W1: Write, W2: Write> TextEmitter<W1, W2> {
         &mut self,
         tool_call: &crate::agent::types::ToolCall,
     ) -> std::io::Result<()> {
-        let kind = if tool_call.kind.is_empty() {
-            "tool"
-        } else {
-            tool_call.kind.as_str()
-        };
+        let kind = if tool_call.kind.is_empty() { "tool" } else { tool_call.kind.as_str() };
         let short = Self::short_title(&tool_call.title);
         writeln!(self.stderr, "● {kind}({short})")?;
         self.stderr.flush()
@@ -391,9 +346,9 @@ impl<W1: Write + Send, W2: Write + Send> Emitter for TextEmitter<W1, W2> {
         use crate::agent::types::{ContentBlock, SessionUpdate};
         match ev {
             BridgeEvent::SessionUpdate { update, .. } => match update {
-                SessionUpdate::AgentMessageChunk {
-                    content: ContentBlock::Text { text },
-                } => self.write_assistant_text(text),
+                SessionUpdate::AgentMessageChunk { content: ContentBlock::Text { text } } => {
+                    self.write_assistant_text(text)
+                }
                 SessionUpdate::AgentThoughtChunk { .. } => {
                     // Reserved for v1.5 `--show-thinking`; default suppresses.
                     // Both branches currently no-op; structure preserved so the
@@ -407,9 +362,7 @@ impl<W1: Write + Send, W2: Write + Send> Emitter for TextEmitter<W1, W2> {
                 }
                 _ => Ok(()),
             },
-            BridgeEvent::TurnComplete {
-                terminal_reason, ..
-            } => match terminal_reason {
+            BridgeEvent::TurnComplete { terminal_reason, .. } => match terminal_reason {
                 Some(TerminalReason::Completed) | None => {
                     self.stdout.write_all(b"\n")?;
                     self.stdout.flush()
@@ -472,9 +425,7 @@ mod text_tests {
         BridgeEvent::SessionUpdate {
             session_id: "s1".into(),
             update: SessionUpdate::AgentMessageChunk {
-                content: ContentBlock::Text {
-                    text: text.to_owned(),
-                },
+                content: ContentBlock::Text { text: text.to_owned() },
             },
         }
     }
@@ -483,9 +434,7 @@ mod text_tests {
         BridgeEvent::SessionUpdate {
             session_id: "s1".into(),
             update: SessionUpdate::AgentThoughtChunk {
-                content: ContentBlock::Text {
-                    text: text.to_owned(),
-                },
+                content: ContentBlock::Text { text: text.to_owned() },
             },
         }
     }
@@ -494,9 +443,7 @@ mod text_tests {
     fn text_assistant_chunk_writes_to_stdout_only() {
         let mut out = Vec::new();
         let mut err = Vec::new();
-        TextEmitter::new(&mut out, &mut err)
-            .emit_event(&agent_message_event("hi"))
-            .unwrap();
+        TextEmitter::new(&mut out, &mut err).emit_event(&agent_message_event("hi")).unwrap();
         assert_eq!(std::str::from_utf8(&out).unwrap(), "hi");
         assert!(err.is_empty(), "stderr unexpectedly populated: {err:?}");
     }
@@ -535,17 +482,12 @@ mod text_tests {
         let mut err = Vec::new();
         let update = ToolCallUpdate {
             tool_call_id: "tc1".into(),
-            fields: ToolCallUpdateFields {
-                status: Some("completed".into()),
-                ..Default::default()
-            },
+            fields: ToolCallUpdateFields { status: Some("completed".into()), ..Default::default() },
         };
         TextEmitter::new(&mut out, &mut err)
             .emit_event(&BridgeEvent::SessionUpdate {
                 session_id: "s1".into(),
-                update: SessionUpdate::ToolCallUpdate {
-                    tool_call_update: update,
-                },
+                update: SessionUpdate::ToolCallUpdate { tool_call_update: update },
             })
             .unwrap();
         assert!(out.is_empty());
@@ -567,9 +509,7 @@ mod text_tests {
         TextEmitter::new(&mut out, &mut err)
             .emit_event(&BridgeEvent::SessionUpdate {
                 session_id: "s1".into(),
-                update: SessionUpdate::ToolCallUpdate {
-                    tool_call_update: update,
-                },
+                update: SessionUpdate::ToolCallUpdate { tool_call_update: update },
             })
             .unwrap();
         assert!(out.is_empty());

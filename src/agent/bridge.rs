@@ -348,10 +348,8 @@ mod tests {
     #[tokio::test]
     async fn command_sets_kill_on_drop() {
         let fixture = runtime_fixture().expect("runtime fixture");
-        let launcher = BridgeLauncher {
-            runtime_path: fixture.runtime_path,
-            script_path: fixture.script_path,
-        };
+        let launcher =
+            BridgeLauncher { runtime_path: fixture.runtime_path, script_path: fixture.script_path };
         let mut cmd = launcher.command(false);
         cmd.arg("--sleep-forever");
         let child = cmd.spawn().expect("spawn");
